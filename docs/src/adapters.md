@@ -57,16 +57,21 @@ With short chains, a tail indicator can be constant in a split chain, yielding
 
 ### InferenceObjects
 
-Each variable can have its own component shape and numeric type:
+Wrap retained draws in the `posterior` group, then request a diagnostic report:
 
 ```@example adapters
 import InferenceObjects
-posterior = InferenceObjects.namedtuple_to_dataset((
-    alpha=x, beta=cat(Float64.(x), -Float64.(x); dims=3)))
+posterior = InferenceObjects.namedtuple_to_dataset((alpha=x,))
 data = InferenceObjects.InferenceData(; posterior)
-report = MCMCMetrics.diagnostics(data)
-report[:beta].index
+result = only(MCMCMetrics.diagnostics(data)[:alpha])
+metrics = (; rhat=result.rhat, ess_bulk=result.ess_bulk,
+    ess_tail=result.ess_tail, mcse_mean=result.mcse_mean)
+@assert all(isfinite, metrics) # hide
+metrics # hide
 ```
+
+The adapter returns a dictionary keyed by variable name. The scalar `alpha`
+has one report row. Vector or matrix variables have one row per component.
 
 InferenceObjects requires separate `draw` and `chain` axes. A combined `sample`
 axis does not identify independent chains. `warmup_posterior` and `sample_stats`
