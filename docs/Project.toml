@@ -1,0 +1,10 @@
+[deps]
+Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+MCMCMetrics = "f5e71950-1e68-48fe-8693-e8151a4be615"
+
+[sources]
+MCMCMetrics = {path = ".."}
+
+[compat]
+Documenter = "1"
+julia = "1.10"
