@@ -20,5 +20,4 @@ import ArraysOfArrays, SpecialFunctions
     include("structured.jl")
     include("multivariate.jl")
     include("adapters.jl")
-    include("chain_adapters.jl")
 end

@@ -9,6 +9,16 @@ julia --project -e 'using Pkg; Pkg.instantiate(); Pkg.test()'
 Tests check public behavior against independent mathematical references.
 Run with `--threads=4` to exercise concurrent online updates on multiple threads.
 
+Each chain adapter has an independent test project. Run one from the repository root:
+
+```sh
+julia --project=test/optional/flexichains -e 'using Pkg; Pkg.develop(PackageSpec(path=pwd())); Pkg.instantiate()'
+julia --project=test/optional/flexichains test/optional/flexichains/runtests.jl
+```
+
+Replace `flexichains` with `mcmcchains` or `inferenceobjects` for the other adapters.
+Core tests do not install these chain packages.
+
 Run pinned external reference checks in their own environment:
 
 ```sh
@@ -43,10 +53,11 @@ to view it.
 ## CI
 
 The workflow checks Julia 1.10 and current stable Julia, one and four threads,
-Linux/macOS/Windows, and strict documentation builds. It retains documentation
-and coverage reports as build artifacts.
+Linux/macOS/Windows, and strict documentation builds. Each chain adapter runs
+separately on Julia 1.10 and current stable Julia on Linux. The workflow retains
+documentation and coverage reports as build artifacts.
 
-The Linux stable-Julia job uploads coverage for `src` and `ext` to
+The Linux stable-Julia core and adapter jobs upload coverage for `src` and `ext` to
 [Codecov](https://app.codecov.io/gh/BJMCox/MCMCMetrics.jl) through GitHub OIDC.
 The upload needs no stored Codecov token. Upload errors fail the job.
 
