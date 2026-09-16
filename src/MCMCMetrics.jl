@@ -3,7 +3,7 @@ module MCMCMetrics
 import ArraysOfArrays, LinearAlgebra, LogExpFunctions, SpecialFunctions, Statistics, StructArrays
 using StructArrays: StructArray
 
-export rhat, ess, mcse, autocor, iact, diagnostics
+export rhat, ess, mcse, autocor, iact, diagnostics, OnlineDiagnostics
 export diagnostic_curve, cost_normalize
 export geweke, heidelberger_welch, raftery_lewis
 export bfmi, sampler_diagnostics, rank_histogram, rank_ecdf
@@ -19,6 +19,7 @@ include("ess.jl")
 include("repetitions.jl")
 include("precision.jl")
 include("diagnostics.jl")
+include("online.jl")
 include("single_chain.jl")
 include("sampler.jl")
 include("ranks.jl")
