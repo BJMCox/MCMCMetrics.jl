@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add optional FlexiChains, MCMCChains, and InferenceObjects adapters for
+  per-parameter diagnostics, preserving chain axes and each variable's precision.
 - Add modern and basic R-hat, including exact compressed repetition counts.
 - Add bulk, tail, raw-mean, quantile, and interval ESS, mean MCSE,
   autocorrelation, and integrated autocorrelation time.

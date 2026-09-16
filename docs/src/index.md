@@ -63,5 +63,5 @@ chain identity, checkpoint timing and stopping thresholds.
 - [Array inputs and batch results](@ref): layouts, repetitions, precision and unavailable results.
 - [Diagnostic families](@ref): available methods and their statistical assumptions.
 - [Online diagnostics](@ref): configuration, metadata, storage and concurrent updates.
-- [Sampler adapters](@ref): StructArrays/ArraysOfArrays storage and sampler ownership.
+- [Sampler adapters](@ref): FlexiChains, MCMCChains, InferenceObjects, and sampler-owned storage.
 - [API reference](@ref): signatures, options and estimator definitions.

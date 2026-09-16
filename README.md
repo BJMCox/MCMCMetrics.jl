@@ -36,6 +36,11 @@ Use `drawdim` and `chaindim` for other layouts. Float32 and Float64 inputs keep
 their precision. Integer repetition counts support compressed states without
 expansion. FFTW provides optional, explicitly selected autocovariances.
 
+Load FlexiChains, MCMCChains, or InferenceObjects to enable optional chain
+adapters. Calls such as `MCMCMetrics.diagnostics(chain)` return results keyed by
+parameter, preserving component shapes, numeric precision, and metric statuses.
+See the [adapter guide](https://bjmcox.github.io/MCMCMetrics.jl/adapters/).
+
 ## Online diagnostics
 
 ```julia

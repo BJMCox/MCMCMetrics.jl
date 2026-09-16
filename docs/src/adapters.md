@@ -3,6 +3,96 @@
 MCMCMetrics has no BAT or sampler dependency. Keep sampler ownership, warmup,
 cycle selection, parameter names and termination policy in the adapter.
 
+## Optional chain packages
+
+Load **FlexiChains**, **MCMCChains**, or **InferenceObjects** alongside MCMCMetrics
+to enable its adapter. These weak dependencies are optional for array inputs
+and online accumulators. Use qualified calls such as `MCMCMetrics.rhat` to avoid
+conflicts with diagnostics exported by other packages.
+
+| Container | Default selection | Layout handling |
+|:--|:--|:--|
+| `FlexiChains.FlexiChain` | Parameters, excluding extras | Public indexing stacks each parameter into draw × chain × component axes |
+| `MCMCChains.Chains` | The `:parameters` section | Views retain separate chains in its draw × parameter × chain storage |
+| `InferenceObjects.InferenceData` | The `posterior` group | Named `draw` and `chain` axes determine the layout |
+| `InferenceObjects.Dataset` | All variables in the supplied dataset | Named axes determine the layout, regardless of physical axis order |
+
+These examples share synthetic draws for one scalar parameter across four chains:
+
+```@example adapters
+using MCMCMetrics
+x = reshape(sin.(Float32.(1:128)), 32, 4);  # draw × chain
+nothing # hide
+```
+
+### FlexiChains
+
+```@example adapters
+import FlexiChains
+samples = map(value -> Dict(FlexiChains.Parameter(:alpha) => value), x)
+fc = FlexiChains.FlexiChain{Symbol}(size(x)..., samples)
+MCMCMetrics.rhat(fc)
+```
+
+Only parameters enter diagnostics. An extra with the same name cannot replace a
+parameter. Keys remain intact, including the `VarName` keys used by Turing.
+
+### MCMCChains
+
+MCMCChains stores **draw × parameter × chain** arrays:
+
+```@example adapters
+import MCMCChains
+mc = MCMCChains.Chains(reshape(x, size(x, 1), 1, size(x, 2)), [:alpha])
+MCMCMetrics.ess(mc; parameters=(:alpha,), kind=:tail)
+```
+
+The default selection is the `:parameters` section. Component names such as
+`Symbol("beta[1]")` remain separate scalar keys. Chain boundaries stay intact.
+
+### InferenceObjects
+
+Each variable can have its own component shape and numeric type:
+
+```@example adapters
+import InferenceObjects
+posterior = InferenceObjects.namedtuple_to_dataset((
+    alpha=x, beta=cat(Float64.(x), -Float64.(x); dims=3)))
+data = InferenceObjects.InferenceData(; posterior)
+report = MCMCMetrics.diagnostics(data)
+report[:beta].index
+```
+
+InferenceObjects requires separate `draw` and `chain` axes. A combined `sample`
+axis does not identify independent chains. `warmup_posterior` and `sample_stats`
+are not included when passing an InferenceData object.
+
+### Results and selection
+
+Every adapter returns a dictionary keyed by the original parameter key. Each
+value is the corresponding array method's result: scalar metrics for scalar
+parameters, or arrays with the parameter's component shape. `diagnostics` returns
+one StructArray per parameter, with component indices and per-metric statuses.
+Each variable retains its numeric precision, including in mixed Float32/Float64 inputs.
+
+Result arrays use positional indices and preserve component and chain order.
+Coordinate labels stay in the source container. Use `parameters=(key1, key2)`
+to select variables, and the container's indexing to select draws and chains.
+Container methods determine their axes and reject `drawdim` and `chaindim` overrides.
+
+Supported methods are `rhat`, `ess`, `mcse`, `iact`, `autocor`, `diagnostics`,
+`diagnostic_curve`, `geweke`, `heidelberger_welch`, `raftery_lewis`,
+`rank_histogram`, and `rank_ecdf`. Their estimator keywords still apply.
+Explicit integer `counts` must match the selected draw and chain order.
+Sampler weights never become repetition counts automatically.
+
+Selected variables need supported numeric values and fixed component shapes.
+Missing observations cause an error. Missing-capable storage containing only
+numbers retains their precision. No draws or variables are silently dropped.
+
+These methods run batch diagnostics. Online updates, joint multivariate checks,
+predictive scores, and sampler metadata use explicit numeric inputs.
+
 ## Batch checkpoints
 
 1. Select retained production draws from one sampling cycle.

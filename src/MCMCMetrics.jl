@@ -30,5 +30,6 @@ include("grouped.jl")
 include("categorical.jl")
 include("movement.jl")
 include("multivariate.jl")
+include("chain_adapters.jl")
 
 end
