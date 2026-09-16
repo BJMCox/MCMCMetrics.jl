@@ -1,0 +1,5 @@
+Manifest*.toml
+*.cov
+*.mem
+lcov.info
+docs/build/

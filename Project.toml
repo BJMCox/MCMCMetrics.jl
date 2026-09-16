@@ -1,0 +1,38 @@
+name = "MCMCMetrics"
+uuid = "f5e71950-1e68-48fe-8693-e8151a4be615"
+license = "MIT"
+version = "0.0.1"
+authors = ["Benjamin Cox <bcox@mpp.mpg.de>", "Oliver Schulz <oschulz@mpp.mpg.de>"]
+
+[deps]
+ArraysOfArrays = "65a8f2f4-9b39-5baf-92e2-a9cc46fdf018"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+LogExpFunctions = "2ab3a3ac-af41-5b50-aa03-7779005ae688"
+SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+StructArrays = "09ab397b-f2b6-538f-b94a-2f83cf4a842a"
+
+[weakdeps]
+FFTW = "7a1cc6ca-52ef-59f5-83cd-3a7055c09341"
+
+[extensions]
+MCMCMetricsFFTWExt = "FFTW"
+
+[compat]
+ArraysOfArrays = "1"
+FFTW = "1"
+LinearAlgebra = "1"
+LogExpFunctions = "0.3, 1"
+SpecialFunctions = "2"
+Statistics = "1"
+StructArrays = "0.7"
+Test = "1"
+julia = "1.10"
+
+[extras]
+FFTW = "7a1cc6ca-52ef-59f5-83cd-3a7055c09341"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test", "FFTW", "Random"]
