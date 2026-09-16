@@ -4,6 +4,7 @@ FlexiChains = "4a37a8b9-6e57-4b92-8664-298d46e639f7"
 InferenceObjects = "b5cf5a8d-e756-4ee3-b014-01d49d192c00"
 MCMCChains = "c7f686f2-ff18-58e9-bc7b-31028e88f75d"
 MCMCMetrics = "f5e71950-1e68-48fe-8693-e8151a4be615"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 
 [sources]
 MCMCMetrics = {path = ".."}
@@ -13,4 +14,5 @@ Documenter = "1"
 FlexiChains = "0.6.40"
 InferenceObjects = "0.4.17"
 MCMCChains = "7"
+Random = "1"
 julia = "1.10"

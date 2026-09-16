@@ -17,11 +17,11 @@ conflicts with diagnostics exported by other packages.
 | `InferenceObjects.InferenceData` | The `posterior` group | Named `draw` and `chain` axes determine the layout |
 | `InferenceObjects.Dataset` | All variables in the supplied dataset | Named axes determine the layout, regardless of physical axis order |
 
-These examples share synthetic draws for one scalar parameter across four chains:
+These examples share 1,000 synthetic independent draws per chain for one scalar parameter:
 
 ```@example adapters
-using MCMCMetrics
-x = reshape(sin.(Float32.(1:128)), 32, 4);  # draw × chain
+using MCMCMetrics, Random
+x = randn(Xoshiro(42), Float32, 1_000, 4);  # draw × chain
 nothing # hide
 ```
 
@@ -44,11 +44,16 @@ MCMCChains stores **draw × parameter × chain** arrays:
 ```@example adapters
 import MCMCChains
 mc = MCMCChains.Chains(reshape(x, size(x, 1), 1, size(x, 2)), [:alpha])
-MCMCMetrics.ess(mc; parameters=(:alpha,), kind=:tail)
+tail_ess = MCMCMetrics.ess(mc; parameters=(:alpha,), kind=:tail)
+@assert isfinite(tail_ess[:alpha]) # hide
+tail_ess # hide
 ```
 
 The default selection is the `:parameters` section. Component names such as
 `Symbol("beta[1]")` remain separate scalar keys. Chain boundaries stay intact.
+
+With short chains, a tail indicator can be constant in a split chain, yielding
+`NaN` tail ESS. Inspect `MCMCMetrics.diagnostics(mc)[:alpha].status` for the cause.
 
 ### InferenceObjects
 
