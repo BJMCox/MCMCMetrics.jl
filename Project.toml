@@ -2,7 +2,7 @@ name = "MCMCMetrics"
 uuid = "f5e71950-1e68-48fe-8693-e8151a4be615"
 license = "MIT"
 version = "0.0.1"
-authors = ["Benjamin Cox <bcox@mpp.mpg.de>", "Oliver Schulz <oschulz@mpp.mpg.de>"]
+authors = ["Jessica Cox <bcox@mpp.mpg.de>", "Oliver Schulz <oschulz@mpp.mpg.de>"]
 
 [deps]
 ArraysOfArrays = "65a8f2f4-9b39-5baf-92e2-a9cc46fdf018"
