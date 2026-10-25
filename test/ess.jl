@@ -38,10 +38,11 @@
     @test ess(distant; kind=:mean, split=false) ≈ Float32(exact_ess)
     @test mcse(distant; split=false) ≈ Float32(sqrt(BigFloat(exact_mcse2)))
 
-    subnormal = nextfloat(0.0)
-    constant_chain = hcat(fill(subnormal, 8), [0.,1,4,2,5,1,0,3] .* subnormal)
-    @test isnan(ess(constant_chain; kind=:mean, split=false))
-    @test isnan(mcse(constant_chain; split=false))
+    # One constant chain keeps the pooled variance; hand-derived IMS gives 32/3.
+    constant_chain = hcat(fill(1.0, 8), [0.,1,4,2,5,1,0,3])
+    @test ess(constant_chain; kind=:mean, split=false) ≈ 32 / 3
+    @test ess(constant_chain .* nextfloat(0.0); kind=:mean, split=false) ≈ 32 / 3
+    @test mcse(constant_chain; split=false) ≈ sqrt(var(vec(constant_chain)) / (32 / 3))
 end
 
 @testset "Autocorrelation and per-chain IACT" begin

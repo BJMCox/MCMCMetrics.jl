@@ -11,8 +11,8 @@ Indicators and diagnostic arithmetic retain the observation floating type.
 
 By default, split each chain in half and discard its middle draw when odd.
 Compute ranks and quantile thresholds after splitting. At least four retained
-draws per split chain are required. A constant chain or transformed chain
-returns a typed `NaN`. Integer repetition counts retain the exact run order,
+draws per split chain are required. Identical pooled values, or identical
+transformed values, return a typed `NaN`; a single constant chain does not. Integer repetition counts retain the exact run order,
 including runs crossing split boundaries, without expanded storage.
 
 The direct autocovariance divides by the chain length at every lag. The Geyer
@@ -296,12 +296,13 @@ function _geyer_ess_result(x::AbstractMatrix)
     n, m = size(x)
     n >= 4 || return (T(NaN), :insufficient_draws)
     origin, scale = _sample_origin_scale(x, T)
+    # Only identical pooled values are unavailable; see _rhat_parameter_result.
+    iszero(scale) && return (T(NaN), :constant)
     means, variances = Vector{T}(undef, m), Vector{T}(undef, m)
     z = Matrix{T}(undef, n, m)
     for c in 1:m
         chain = view(x, :, c)
-        chain_origin, chain_scale = _sample_origin_scale(chain, T)
-        iszero(chain_scale) && return (T(NaN), :constant)
+        chain_origin, _ = _sample_origin_scale(chain, T)
         centered = view(z, :, c)
         # Center within each chain before scaling. A distant chain must not
         # round a small chain's distinct values to the same global residual.

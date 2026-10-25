@@ -104,9 +104,8 @@ function _run_ess_result(runs; estimator=:geyer, autocov=:direct, window=5,
     max_lag_work=100_000_000, T=_floattype(eltype(runs.values)))
     n, m = runs.n, length(runs.ranges)
     n >= 4 || return (T(NaN), :insufficient_draws)
-    any(r -> all(i -> runs.values[i] == runs.values[first(r)], r), runs.ranges) &&
-        return (T(NaN), :constant)
     origin, scale = _sample_origin_scale(runs.values, T)
+    iszero(scale) && return (T(NaN), :constant)
     means, variances = Vector{T}(undef, m), Vector{T}(undef, m)
     z = Vector{T}(undef, length(runs.values))
     for (c, r) in enumerate(runs.ranges)

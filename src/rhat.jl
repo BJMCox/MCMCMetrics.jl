@@ -13,8 +13,9 @@ Splitting omits the middle draw of odd-length chains before ranking or folding.
 
 `counts` contains exact nonnegative integer repetition counts, never importance
 weights. Logical chain lengths must match. Computation uses stored runs without
-expanding them. A constant original or split chain, including a constant folded
-chain, makes the corresponding statistic unavailable (`NaN`).
+expanding them. Identical pooled values, or identical folded values, make R-hat
+unavailable (`NaN`). A constant chain among varying chains gives a large R-hat,
+and `Inf` when every split chain is constant.
 
 Float32 and Float64 observations retain their arithmetic and result type.
 Integer observations use their Julia floating counterpart, with exact integer
@@ -159,9 +160,9 @@ function _rhat_parameter_result(d, p; kind=:rank, split=true, runs=nothing, rank
     n = first(d.lengths)
     n >= (split ? 4 : 2) || return (value=T(NaN), status=:insufficient_draws)
     isnothing(runs) && (runs = _parameter_runs(d, p, split))
-    if any(r -> all(i -> runs.values[i] == runs.values[first(r)], r), runs.ranges)
-        return (value=T(NaN), status=:constant)
-    end
+    # Like posterior, only identical pooled values make R-hat unavailable. A
+    # stuck chain keeps positive pooled variance and must give a large R-hat.
+    allequal(runs.values) && return (value=T(NaN), status=:constant)
     if kind === :basic
         moments = _basic_run_moments(runs.values, runs.weights, runs.ranges, runs.n, T)
         value = _rhat_from_moments(moments.means, moments.variances, runs.n)
@@ -169,9 +170,7 @@ function _rhat_parameter_result(d, p; kind=:rank, split=true, runs=nothing, rank
         order = sortperm(runs.values)
         isnothing(ranked) && (ranked = _rank_normalize(runs.values, runs.weights, T, order))
         folded = _rank_normalize(_folded_values(runs.values, runs.weights, order), runs.weights, T)
-        if any(r -> all(i -> folded[i] == folded[first(r)], r), runs.ranges)
-            return (value=T(NaN), status=:constant)
-        end
+        allequal(folded) && return (value=T(NaN), status=:constant)
         bulk = _run_moments(ranked, runs.weights, runs.ranges, runs.n)
         tail = _run_moments(folded, runs.weights, runs.ranges, runs.n)
         value = max(_rhat_from_moments(bulk.means, bulk.variances, runs.n),
