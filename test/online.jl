@@ -19,6 +19,20 @@
         end
     end
 
+    @testset "Stuck chain R-hat" begin
+        x = [1.0 5.0; 2.0 5.0; 4.0 5.0; 3.0 5.0]
+        stuck = OnlineDiagnostics(Float64; nchains=2)
+        append!(stuck, x)
+        reference = sqrt(3 / 4 + var(vec(mean(x; dims=1))) / mean(vec(var(x; dims=1))))
+        @test rhat(stuck; kind=:basic, split=false) ≈ reference
+        @test only(diagnostics(stuck)).status.rhat_basic === :ok
+
+        pooled = OnlineDiagnostics(Float64; nchains=2)
+        append!(pooled, fill(5.0, 4, 2))
+        @test isnan(only(rhat(pooled; kind=:basic, split=false)))
+        @test only(diagnostics(pooled)).status.rhat_basic === :constant
+    end
+
     @testset "Chunks, repetitions, and axes" begin
         state = OnlineDiagnostics(Float64; nchains=2, parameter_shape=(2,))
         x = reshape(Float64.(1:24), 4, 2, 3)

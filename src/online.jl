@@ -353,8 +353,10 @@ function _online_rhat(snapshot, p, ::Type{T}) where {T}
     all(==(first(counts)), counts) || return (T(NaN), :unequal_chain_lengths)
     n = first(counts)
     n < 2 && return (T(NaN), :insufficient_draws)
-    any(iszero, @view(snapshot.m2[p, :])) && return (T(NaN), :constant)
     origin = snapshot.origin[p, 1]
+    # A stuck chain is evidence of nonconvergence. Only a constant pool is undefined.
+    all(c -> iszero(snapshot.m2[p, c]) && snapshot.origin[p, c] == origin, eachindex(counts)) &&
+        return (T(NaN), :constant)
     scale = maximum(@view snapshot.scale[p, :])
     for c in eachindex(counts)
         scale = _online_scale(origin, snapshot.origin[p, c], scale)
