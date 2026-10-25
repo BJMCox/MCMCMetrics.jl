@@ -57,9 +57,9 @@ means; modern rank/folded R-hat remains a batch calculation. Independent chains
 can update concurrently. Preserve draw order within each chain and finish old
 producers before resetting the state.
 
-The runtime dependencies are StructArrays, ArraysOfArrays, Statistics,
-LinearAlgebra, SpecialFunctions and LogExpFunctions. Samplers own warmup,
-chain identity and stopping rules.
+The runtime dependencies are StructArrays, ArraysOfArrays, OrderedCollections,
+Statistics, LinearAlgebra, SpecialFunctions and LogExpFunctions. Samplers own
+warmup, chain identity and stopping rules.
 
 [Documentation](https://juliabayes.github.io/MCMCMetrics.jl/) ·
 [Sampler adapters](https://juliabayes.github.io/MCMCMetrics.jl/adapters/) ·

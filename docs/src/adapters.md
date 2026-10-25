@@ -79,8 +79,8 @@ are not included when passing an InferenceData object.
 
 ### Results and selection
 
-Every adapter except `diagnostics` returns a `ParameterResults` dictionary keyed
-by the original parameter key and iterated in the container's parameter order.
+Every adapter except `diagnostics` returns an `OrderedDict{K,Any}` from
+OrderedCollections, keyed by the original parameter key in the container's order.
 Each value is the corresponding array method's result: scalar metrics for scalar
 parameters, or arrays with the parameter's component shape. Each value retains
 its numeric precision, including in mixed Float32/Float64 inputs.

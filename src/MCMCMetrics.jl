@@ -2,6 +2,7 @@ module MCMCMetrics
 
 import ArraysOfArrays, LinearAlgebra, LogExpFunctions, SpecialFunctions, Statistics, StructArrays
 using StructArrays: StructArray
+using OrderedCollections: OrderedDict
 
 export rhat, ess, mcse, autocor, iact, diagnostics, OnlineDiagnostics
 export diagnostic_curve, cost_normalize
