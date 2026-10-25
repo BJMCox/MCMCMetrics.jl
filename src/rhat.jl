@@ -125,10 +125,13 @@ end
 
 function _run_moments(values, weights, ranges, n)
     T = eltype(values)
-    means = [sum(i -> (T(weights[i]) / T(n)) * values[i], r) for r in ranges]
-    variances = [sum(i -> (T(weights[i]) / T(n - 1)) * abs2(values[i] - means[c]), r)
+    # Center on each chain's first value so a constant chain has exactly zero variance.
+    shifts = [values[first(r)] for r in ranges]
+    deltas = [sum(i -> (T(weights[i]) / T(n)) * (values[i] - shifts[c]), r)
         for (c, r) in enumerate(ranges)]
-    (; means, variances)
+    variances = [sum(i -> (T(weights[i]) / T(n - 1)) * abs2(values[i] - shifts[c] - deltas[c]), r)
+        for (c, r) in enumerate(ranges)]
+    (; means=shifts .+ deltas, variances)
 end
 
 function _basic_run_moments(values, weights, ranges, n, ::Type{T}) where {T}

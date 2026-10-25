@@ -92,6 +92,9 @@ end
     row = only(diagnostics(stuck))
     @test row.rhat > 1.01 && all(isfinite, (row.ess_bulk, row.mcse_mean))
 
+    # Chains constant at different values have no within-chain variance.
+    levels = repeat([1.0 2.0 3.0 4.0], 100)
+    @test rhat(levels) == rhat(levels; kind=:basic) == Inf
     @test isnan(rhat(fill(2.0, 8, 2)))
     @test isnan(rhat([0.0 1.0; 1.0 2.0; 2.0 3.0]))
 end
