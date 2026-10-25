@@ -38,9 +38,9 @@ references call half this quantity the integrated autocorrelation time.
 `autocov=:fft` requires loading FFTW and dense draws; it changes only the
 autocovariance computation. Direct arithmetic remains the default. Compressed
 draws with a count above one limit direct cursor work to `max_lag_work` per
-parameter and transform (two stored runs per lag is the charged upper bound). The default
-`nothing` means `max(100_000_000, 2S^2)` for `S` stored positive-count draws,
-enough for about `S` lags. Exceeding the budget throws a work-limit exception;
+parameter and transform (two stored runs per lag is the charged upper bound).
+The default `nothing` means `max(100_000_000, 2S^2)` for `S` stored
+positive-count draws, enough for about `S` lags. Exceeding the budget throws a work-limit exception;
 increase it explicitly to permit more work. Estimators never truncate silently
 or expand repetitions.
 

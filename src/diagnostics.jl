@@ -39,7 +39,8 @@ function diagnostics(x; drawdim=1, chaindim=_default_chaindim(x), counts=nothing
             values[j][p], status[j][p] = value, s
         end
     end
-    StructArrays.StructArray((; index=vec(collect(CartesianIndices(d.shape))), summary..., values...,
+    index = vec(collect(CartesianIndices(d.shape)))
+    StructArrays.StructArray((; index, summary..., values...,
         n_draws=fill(n_draws, P), n_chains=fill(length(d.chains), P),
         status=StructArrays.StructArray(status)))
 end
