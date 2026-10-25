@@ -365,12 +365,14 @@ function Base.merge!(destination::OnlineDiagnostics{T,M}, source::OnlineDiagnost
     return destination
 end
 
+# `unequal` accepts different chain lengths, with each chain's own variance divisor
+# and the shortest length in the (n-1)/n term.
 function _online_rhat(snapshot, p, ::Type{T}, means=Vector{T}(undef, size(snapshot.n, 2)),
-    variances=similar(means)) where {T}
+    variances=similar(means); unequal=false) where {T}
     counts = @view snapshot.n[p, :]
     length(counts) < 2 && return (T(NaN), :insufficient_chains)
-    all(==(first(counts)), counts) || return (T(NaN), :unequal_chain_lengths)
-    n = first(counts)
+    unequal || all(==(first(counts)), counts) || return (T(NaN), :unequal_chain_lengths)
+    n = minimum(counts)
     n < 2 && return (T(NaN), :insufficient_draws)
     origin = snapshot.origin[p, 1]
     # A stuck chain is evidence of nonconvergence. Only a constant pool is undefined.
@@ -383,7 +385,7 @@ function _online_rhat(snapshot, p, ::Type{T}, means=Vector{T}(undef, size(snapsh
     for c in eachindex(counts)
         factor = snapshot.scale[p, c] / scale
         means[c] = _online_center(snapshot.origin[p, c], origin, scale) + factor * snapshot.mean[p, c]
-        variances[c] = factor * (factor * (snapshot.m2[p, c] + snapshot.m2_error[p, c])) / T(n - 1)
+        variances[c] = factor * (factor * (snapshot.m2[p, c] + snapshot.m2_error[p, c])) / T(counts[c] - 1)
     end
     result = _rhat_from_moments(means, variances, n)
     return (result, isnan(result) ? :estimator_failed : :ok)
@@ -540,7 +542,12 @@ iact(state::OnlineDiagnostics; kind=:mean, estimator=:dyadic_batchmeans, pooled:
 
 Return `(n_draws, max_rhat, min_ess)` for a live progress display. `max_rhat` is
 the largest online basic R-hat and `min_ess` the smallest pooled mean ESS (see
-`ess(state; pooled=true)`), each over parameters with a value. A field is NaN when
+`ess(state; pooled=true)`), each over parameters with a value. Running producers
+almost never stop at equal chain lengths, so `max_rhat` also accepts unequal
+lengths: each chain uses all its draws and its own variance divisor, and the
+shortest length enters `(n-1)/n`. Chains that differ by d draws change the
+between-chain term by a relative O(d/n) against equal lengths.
+`rhat(state)` keeps the batch rule and needs equal lengths. A field is NaN when
 its metric (`:rhat_basic`, or any of `:mcse_mean`, `:ess_mean`, `:iact_mean`) is
 not configured or no parameter has a value. Holds all chain locks while it reads,
 without copying the state.
@@ -555,7 +562,7 @@ function progress_summary(state::OnlineDiagnostics{T,Metrics}) where {T,Metrics}
         max_rhat = min_ess = T(NaN)
         for p in axes(moments.n, 1)
             if :rhat_basic in Metrics
-                value = first(_online_rhat(moments, p, T, means, variances))
+                value = first(_online_rhat(moments, p, T, means, variances; unequal=true))
                 isnan(value) || (max_rhat = isnan(max_rhat) ? value : max(max_rhat, value))
             end
             if levels !== nothing

@@ -133,7 +133,12 @@ end
 
         append!(state, x[1:36]; chain=2)
         @test ess(state; pooled=true) ≈ pooled_oracle([chains[1], vcat(chains[2], x[1:36])]).ess
-        @test isnan(progress_summary(state).max_rhat)
+        # Live snapshots see unequal lengths; the summary keeps R-hat available.
+        longer = vcat(chains[2], x[1:36])
+        variances = [var(chains[1]), var(longer)]
+        means = [mean(chains[1]), mean(longer)]
+        @test isnan(rhat(state))
+        @test progress_summary(state).max_rhat ≈ sqrt(63 / 64 + var(means) / mean(variances))
 
         vector = OnlineDiagnostics(Float32; nchains=2, parameter_shape=(2,))
         append!(vector, Float32[1 2; 3 4;;; 5 6; 7 9])
