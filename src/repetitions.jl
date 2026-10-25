@@ -6,7 +6,16 @@ Base.showerror(io::IO, error::_WorkLimitError) = print(io, error.message)
 
 function _check_window(window, max_lag_work)
     isfinite(window) && window > 0 || throw(ArgumentError("window must be finite and positive"))
-    max_lag_work > 0 || throw(ArgumentError("max_lag_work must be positive"))
+    isnothing(max_lag_work) || max_lag_work > 0 || throw(ArgumentError("max_lag_work must be positive"))
+end
+
+# The default allows about as many lags as stored draws, so compressed input
+# works wherever the dense path does; huge repetition counts stay bounded.
+function _lag_budget(d, max_lag_work)
+    isnothing(max_lag_work) || return Int(max_lag_work)
+    stored = sum(c -> count(i -> _count(d, c, i) > 0, axes(d.chains[c], 1)), eachindex(d.chains))
+    work, overflow = Base.mul_with_overflow(2stored, stored)
+    overflow ? typemax(Int) : max(100_000_000, work)
 end
 
 function _check_fft_counts(d, autocov)
@@ -67,7 +76,7 @@ function _autocov_function(z, runs, autocov, max_lag_work)
         # Count a conservative two cursor advances per stored run and lag.
         cost = Base.Checked.checked_mul(2, length(z))
         cost <= max_lag_work - work[] || throw(_WorkLimitError(
-            "direct lag work exceeds max_lag_work; increase the explicit budget or use dense FFT"))
+            "direct lag work exceeds max_lag_work = $max_lag_work; increase it or use dense FFT"))
         work[] += cost
         _run_autocov(z, runs.weights, runs.ranges, runs.n, k)
     end

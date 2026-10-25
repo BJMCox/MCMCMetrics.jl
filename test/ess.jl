@@ -46,12 +46,13 @@
 end
 
 @testset "Slowly mixing chains" begin
-    # Late lags come from the transform; the compressed path sums them directly.
-    walk = cumsum(randn(Random.Xoshiro(1), 2000, 4); dims=1)
-    ones_counts = ones(Int, size(walk))
-    @test ess(walk) ≈ ess(walk; counts=ones_counts) rtol=1e-12
-    @test ess(walk; kind=:mean) ≈ ess(walk; kind=:mean, counts=ones_counts) rtol=1e-12
-    @test iact(walk) ≈ iact(walk; counts=ones_counts) rtol=1e-12
+    # Late dense lags come from the transform; the compressed path sums them
+    # directly and, under the default budget, needs no explicit max_lag_work.
+    walk = cumsum(randn(Random.Xoshiro(1), 10_000, 4); dims=1)
+    counts, expanded = fill(2, size(walk)), repeat(walk; inner=(2, 1))
+    @test ess(walk; counts) ≈ ess(expanded) rtol=1e-12
+    @test ess(walk; kind=:mean, counts) ≈ ess(expanded; kind=:mean) rtol=1e-12
+    @test iact(walk; counts) ≈ iact(expanded) rtol=1e-12
 
     # Direct lags alone take minutes here; the transform takes well under a second.
     long = cumsum(randn(Random.Xoshiro(2), 200_000, 4); dims=1)

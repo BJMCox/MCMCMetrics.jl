@@ -36,25 +36,28 @@ references call half this quantity the integrated autocorrelation time.
 
 `autocov=:fft` requires loading FFTW and dense draws; it changes only the
 autocovariance computation. Direct arithmetic remains the default. Compressed
-and Sokal direct calculations limit cursor work to `max_lag_work=100_000_000`
-per parameter and transform (two stored runs per lag is the charged upper
-bound). Exceeding the budget throws a work-limit exception; increase it explicitly to permit more
-work. Estimators never truncate silently or expand repetitions.
+and Sokal direct calculations limit cursor work to `max_lag_work` per parameter
+and transform (two stored runs per lag is the charged upper bound). The default
+`nothing` means `max(100_000_000, 2S^2)` for `S` stored positive-count draws,
+enough for about `S` lags. Exceeding the budget throws a work-limit exception;
+increase it explicitly to permit more work. Estimators never truncate silently
+or expand repetitions.
 
 See Geyer (1992), doi:10.1214/ss/1177011137, and Vehtari et al. (2021),
 doi:10.1214/20-BA1221. The latter supplies the multi-chain variance estimator.
 """
 function ess(x; kind::Symbol=:bulk, split::Bool=true, estimator::Symbol=:geyer,
     autocov::Symbol=:direct, prob::Real=0.95, interval=nothing,
-    window::Real=5, max_lag_work::Integer=100_000_000,
+    window::Real=5, max_lag_work::Union{Integer,Nothing}=nothing,
     drawdim=1, chaindim=_default_chaindim(x), counts=nothing)
     _check_ess_options(kind, estimator, autocov, prob, interval)
     _check_window(window, max_lag_work)
     d = _draws(x; drawdim, chaindim, counts, nonfinite=true)
     _check_fft_counts(d, autocov)
+    budget = _lag_budget(d, max_lag_work)
     values = _parameter_values(d) do p
         _ess_parameter_result(d, p; kind, split, prob, interval,
-            estimator, autocov, window, max_lag_work)[1]
+            estimator, autocov, window, max_lag_work=budget)[1]
     end
     _parameter_result(values, d.shape)
 end
@@ -92,7 +95,7 @@ Batch work limits both full windows and local run-overlap visits by
 """
 function mcse(x; estimand::Symbol=:mean, split::Bool=true, estimator::Symbol=:geyer,
     autocov::Symbol=:direct, prob::Real=0.5, window::Real=5,
-    batch_size=nothing, max_lag_work::Integer=100_000_000,
+    batch_size=nothing, max_lag_work::Union{Integer,Nothing}=nothing,
     drawdim=1, chaindim=_default_chaindim(x), counts=nothing)
     estimand in (:mean, :variance, :sd, :quantile, :median) ||
         throw(ArgumentError("unsupported MCSE estimand"))
@@ -107,15 +110,16 @@ function mcse(x; estimand::Symbol=:mean, split::Bool=true, estimator::Symbol=:ge
     estimand in (:quantile, :median) && _check_ess_options(:quantile, :geyer, :direct, prob, nothing)
     d = _draws(x; drawdim, chaindim, counts, nonfinite=true)
     _check_fft_counts(d, autocov)
+    budget = _lag_budget(d, max_lag_work)
     values = _parameter_values(d) do p
         _precision_parameter_result(d, p; estimand, split, estimator,
-            autocov, prob, window, batch_size, max_lag_work)[1]
+            autocov, prob, window, batch_size, max_lag_work=budget)[1]
     end
     _parameter_result(values, d.shape)
 end
 
 """
-    autocor(x; lags=nothing, autocov=:direct, max_lag_work=100_000_000,
+    autocor(x; lags=nothing, autocov=:direct, max_lag_work=nothing,
             drawdim=1, chaindim, counts=nothing)
 
 Return direct autocorrelations with shape lag × chain × parameter axes.
@@ -128,12 +132,13 @@ Compressed direct work uses the cursor budget described by [`ess`](@ref),
 separately for each chain and parameter. Dense direct work remains uncapped.
 """
 function autocor(x; lags=nothing, autocov::Symbol=:direct,
-    max_lag_work::Integer=100_000_000, drawdim=1,
+    max_lag_work::Union{Integer,Nothing}=nothing, drawdim=1,
     chaindim=_default_chaindim(x), counts=nothing)
     d = _draws(x; drawdim, chaindim, counts)
     _check_geyer(:geyer, autocov)
     _check_window(5, max_lag_work)
     _check_fft_counts(d, autocov)
+    budget = _lag_budget(d, max_lag_work)
     lagvalues = isnothing(lags) ? collect(0:min(100, minimum(d.lengths) - 1)) : collect(lags)
     all(k -> k isa Integer && 0 <= k < minimum(d.lengths), lagvalues) ||
         throw(ArgumentError("lags must be integers within each chain"))
@@ -153,7 +158,7 @@ function autocor(x; lags=nothing, autocov::Symbol=:direct,
         runs = _single_chain_runs(d, p, c)
         z, _ = _scaled_samples(runs.values, T)
         z .-= _weighted_mean(z, runs.weights)
-        covariance = _autocov_function(z, runs, autocov, max_lag_work)
+        covariance = _autocov_function(z, runs, autocov, budget)
         v = covariance(0)
         for (i, k) in enumerate(lagvalues)
             values[i, c, p] = v > zero(T) ? covariance(k) / v : T(NaN)
@@ -175,12 +180,13 @@ Integer counts use exact run overlaps. `estimator=:sokal`, `window=5`,
 `autocov=:fft`, and `max_lag_work` follow [`ess`](@ref).
 """
 function iact(x; estimator::Symbol=:geyer, autocov::Symbol=:direct,
-    window::Real=5, max_lag_work::Integer=100_000_000,
+    window::Real=5, max_lag_work::Union{Integer,Nothing}=nothing,
     drawdim=1, chaindim=_default_chaindim(x), counts=nothing)
     _check_geyer(estimator, autocov)
     d = _draws(x; drawdim, chaindim, counts)
     _check_window(window, max_lag_work)
     _check_fft_counts(d, autocov)
+    budget = _lag_budget(d, max_lag_work)
     T = _floattype(d)
     values = Matrix{T}(undef, length(d.chains), prod(d.shape))
     for p in 1:prod(d.shape), c in eachindex(d.chains)
@@ -191,7 +197,7 @@ function iact(x; estimator::Symbol=:geyer, autocov::Symbol=:direct,
             continue
         end
         runs = _single_chain_runs(d, p, c)
-        effective, _ = _run_ess_result(runs; estimator, autocov, window, max_lag_work)
+        effective, _ = _run_ess_result(runs; estimator, autocov, window, max_lag_work=budget)
         values[c, p] = T(runs.n) / effective
     end
     _parameter_result(values, _chain_result_shape(x, d, chaindim))
