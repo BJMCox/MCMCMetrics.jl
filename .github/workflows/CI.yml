@@ -106,6 +106,22 @@ jobs:
           fail_ci_if_error: true
           name: ${{ matrix.adapter }}-tests
 
+  reference:
+    name: Reference packages
+    runs-on: ubuntu-latest
+    # Pinned reference packages can lag new Julia releases.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: '1'
+      - uses: julia-actions/cache@v3
+      - name: Install reference environment
+        run: julia --project=test/reference -e 'using Pkg; Pkg.develop(PackageSpec(path=pwd())); Pkg.instantiate()'
+      - name: Compare with reference packages
+        run: julia --project=test/reference test/reference/compare.jl
+
   docs:
     name: Documentation and doctests
     runs-on: ubuntu-latest
