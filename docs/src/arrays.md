@@ -129,8 +129,9 @@ Empty draw or parameter axes are rejected.
 
 Statistically undefined estimates return a typed NaN. Aggregate status identifies
 short chains, constant chains, unequal lengths, exhausted work budgets,
-or estimator failure. A constant original, split, or transformed chain makes the
-corresponding estimate unavailable. Finite output alone does not establish convergence.
+or estimator failure. Identical pooled draws, or identical transformed values,
+make the corresponding estimate unavailable. A single constant chain among
+varying chains keeps R-hat, ESS and MCSE available. Finite output alone does not establish convergence.
 The caller owns convergence thresholds and stopping rules.
 
 ## References

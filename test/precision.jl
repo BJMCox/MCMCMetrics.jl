@@ -39,9 +39,16 @@ end
 
 @testset "Batch degeneracy and native run arithmetic" begin
     alternating = [0., 1, 0, 1]
+    x = [sin(0.9i + 2c) + 0.5cos(2.3i * c) for i in 1:200, c in 1:4]
+    stuck = copy(x)
+    stuck[:, 3] .= 5.0
     for estimator in (:batchmeans, :overlapping)
         @test isnan(mcse(alternating; estimator, batch_size=2))
-        @test isnan(mcse(hcat(alternating, [1., 2, 4, 8]); estimator, batch_size=2))
+        @test isnan(mcse(fill(2.0, 8, 2); estimator, batch_size=2))
+        # A chain with zero long-run variance contributes nothing, as in R-hat and ESS.
+        @test mcse(hcat(alternating, [1., 2, 4, 8]); estimator, batch_size=2) ≈
+            mcse([1., 2, 4, 8]; estimator, batch_size=2) / 2
+        @test mcse(stuck; estimator) ≈ 3 / 4 * mcse(stuck[:, [1, 2, 4]]; estimator)
     end
     # The discarded singleton must not influence either centering or scaling.
     for T in (Float32, Float64)

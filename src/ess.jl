@@ -90,7 +90,8 @@ The default batch size is `max(1, isqrt(shortest_logical_chain_length))`.
 Each chain needs at least two full batches. Nonoverlapping batches discard
 the incomplete final batch; overlapping batches use every full window and
 the full-chain mean. Chain contributions are weighted by their retained
-lengths. See Flegal and Jones (2010), doi:10.1214/09-AOS735.
+lengths. A constant chain contributes zero; the MCSE is `NaN` only when
+every chain has zero long-run variance. See Flegal and Jones (2010), doi:10.1214/09-AOS735.
 Batch work limits both full windows and local run-overlap visits by
 `max_lag_work`, without storing windows. The former keyword `estimand` is
 deprecated in favour of `kind`.

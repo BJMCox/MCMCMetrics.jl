@@ -16,8 +16,9 @@ empirical inversion. A tied interval that collapses returns unavailable precisio
 These quantile methods assume regular continuous quantiles.
 
 Mean MCSE supports nonoverlapping and overlapping batch means. Independent
-chain mean variances combine using retained draw counts. A nonpositive LRV
-is unavailable, including an alternating process with identical batch means.
+chain mean variances combine using retained draw counts. A constant chain
+contributes zero variance. The MCSE is unavailable only when every chain has
+zero LRV, for example identical draws or an alternating process with identical batch means.
 No fallback substitutes nominal sample size or clamps ESS to the draw count.
 
 `diagnostic_curve(x; prefixes, diagnostic=ess)` evaluates caller-chosen logical

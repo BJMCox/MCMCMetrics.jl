@@ -154,8 +154,9 @@ function _batch_mcse_result(d, p, estimator, batch_size, max_lag_work)
         n = lengths[c]
         runs = _clip_batch_runs!(_single_chain_runs(d, p, c), n)
         origin, scale = _sample_origin_scale(runs.values, T)
-        iszero(scale) && return (T(NaN), :constant)
-        z = [_centered_value(v, origin, T) / scale for v in runs.values]
+        # A stuck chain adds no mean variance, as in R-hat and ESS.
+        iszero(scale) && continue
+        z =[_centered_value(v, origin, T) / scale for v in runs.values]
         a = n ÷ b
         batches = estimator === :batchmeans ? a : n - b + 1
         batches <= max_lag_work - work || throw(_WorkLimitError("batch work exceeds max_lag_work"))
@@ -169,11 +170,12 @@ function _batch_mcse_result(d, p, estimator, batch_size, max_lag_work)
         work += batches
         longrun = estimator === :batchmeans ? T(b) * (T(a) / T(a - 1)) * sumsq[] :
             T(n) / T(n - b) * T(b) * sumsq[]
-        isfinite(longrun) && longrun > zero(T) || return (T(NaN), :estimator_failed)
+        isfinite(longrun) || return (T(NaN), :estimator_failed)
         chain_error = sqrt(longrun / T(n)) * scale
         error = hypot(error, T(n) / T(retained) * chain_error)
     end
-    isfinite(error) && error > zero(T) ? (error, :ok) : (T(NaN), :estimator_failed)
+    iszero(error) && return (T(NaN), :constant)
+    isfinite(error) ? (error, :ok) : (T(NaN), :estimator_failed)
 end
 
 """
