@@ -15,7 +15,10 @@ draws per split chain are required. Identical pooled values, or identical
 transformed values, return a typed `NaN`; a single constant chain does not. Integer repetition counts retain the exact run order,
 including runs crossing split boundaries, without expanded storage.
 
-The direct autocovariance divides by the chain length at every lag. The Geyer
+The direct autocovariance divides by the chain length at every lag. Dense
+Geyer ESS computes the first `16*ndigits(n; base=2)` lags directly and any later
+lags, which only slowly mixing chains reach, from one internal radix-2 FFT of
+the same quantity. This bounds the cost by O(n log n) per transform. The Geyer
 estimator truncates at the first nonpositive pair of autocorrelations, then
 reduces each retained pair to the minimum of all preceding pairs (IMS).
 It uses every available complete pair, without a lag cap or ESS cap.
@@ -291,6 +294,66 @@ function _mean_autocov(z::AbstractArray{T}, lag::Integer) where {T}
     result / T(n) / T(m)
 end
 
+# Direct lags are exact in order and cheap for fast mixing. A slowly mixing
+# chain needs O(n) lags, so later lags come from one O(n log n) transform.
+function _dense_autocov(z::AbstractMatrix{T}) where {T}
+    first_transformed = 16 * ndigits(size(z, 1); base=2)
+    transformed = T[]
+    function covariance(k)
+        k < first_transformed && return _mean_autocov(z, k)
+        isempty(transformed) && append!(transformed, _radix2_autocov(z))
+        transformed[k + 1]
+    end
+end
+
+# Same result as _mean_autocov at every lag, up to rounding. Two real chains
+# share one complex transform, and only the sum of their spectra is needed.
+function _radix2_autocov(z::AbstractMatrix{T}) where {T}
+    n, m = size(z)
+    N = nextpow(2, 2n - 1)
+    twiddles = [cispi(-T(2k) / T(N)) for k in 0:N÷2-1]
+    power = zeros(Complex{T}, N)
+    buffer = Vector{Complex{T}}(undef, N)
+    for c in 1:2:m
+        fill!(buffer, zero(Complex{T}))
+        for i in 1:n
+            buffer[i] = complex(z[i, c], c < m ? z[i, c + 1] : zero(T))
+        end
+        _radix2_fft!(buffer, twiddles, false)
+        for k in 0:N-1
+            power[k + 1] += (abs2(buffer[k + 1]) + abs2(buffer[mod(N - k, N) + 1])) / T(2)
+        end
+    end
+    _radix2_fft!(power, twiddles, true)
+    [real(power[k + 1]) / T(N) / T(n) / T(m) for k in 0:n-1]
+end
+
+function _radix2_fft!(a::Vector{Complex{T}}, twiddles, inverse) where {T}
+    N = length(a)
+    j = 0
+    for i in 1:N-1
+        bit = N >> 1
+        while j & bit != 0
+            j ⊻= bit
+            bit >>= 1
+        end
+        j |= bit
+        i < j && ((a[i + 1], a[j + 1]) = (a[j + 1], a[i + 1]))
+    end
+    half = 1
+    while half < N
+        stride = N ÷ 2half
+        @inbounds for s in 0:2half:N-1, k in 0:half-1
+            w = twiddles[k * stride + 1]
+            v = a[s + k + half + 1] * (inverse ? conj(w) : w)
+            u = a[s + k + 1]
+            a[s + k + 1], a[s + k + half + 1] = u + v, u - v
+        end
+        half <<= 1
+    end
+    a
+end
+
 function _geyer_ess_result(x::AbstractMatrix)
     T = _floattype(eltype(x))
     n, m = size(x)
@@ -312,7 +375,7 @@ function _geyer_ess_result(x::AbstractMatrix)
         means[c] = _centered_value(chain_origin, origin, T) / scale + local_mean
         centered .-= local_mean
     end
-    _combined_ess(k -> _mean_autocov(z, k), means, variances, n, :geyer, 5)
+    _combined_ess(_dense_autocov(z), means, variances, n, :geyer, 5)
 end
 
 # Multi-chain autocorrelation from the pooled variance estimate of Vehtari et

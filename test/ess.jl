@@ -45,6 +45,20 @@
     @test mcse(constant_chain; split=false) ≈ sqrt(var(vec(constant_chain)) / (32 / 3))
 end
 
+@testset "Slowly mixing chains" begin
+    # Late lags come from the transform; the compressed path sums them directly.
+    walk = cumsum(randn(Random.Xoshiro(1), 2000, 4); dims=1)
+    ones_counts = ones(Int, size(walk))
+    @test ess(walk) ≈ ess(walk; counts=ones_counts) rtol=1e-12
+    @test ess(walk; kind=:mean) ≈ ess(walk; kind=:mean, counts=ones_counts) rtol=1e-12
+    @test iact(walk) ≈ iact(walk; counts=ones_counts) rtol=1e-12
+
+    # Direct lags alone take minutes here; the transform takes well under a second.
+    long = cumsum(randn(Random.Xoshiro(2), 200_000, 4); dims=1)
+    diagnostics(walk)
+    @test @elapsed(diagnostics(long)) < 10
+end
+
 @testset "Autocorrelation and per-chain IACT" begin
     chain = [1,2,3,4,2,1,3,2]
     @test autocor(chain; lags=0:3) ≈ [1, 1/40, -29/60, -9/40]
