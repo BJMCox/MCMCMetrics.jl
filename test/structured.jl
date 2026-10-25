@@ -17,8 +17,13 @@
     @test comparison.statistic ≈ 25/87
     @test comparison.pvalue ≈ SpecialFunctions.erfc(sqrt(25/174))
     @test categorical_weiss(100 .- 7states) == comparison
-    alternating = repeat([0 1;1 0],4)
+    alternating = repeat([0 1;1 0],50)
     @test categorical_weiss(alternating).status === :outside_dar1
+    # IID chains put phi on the model boundary, so half the estimates are negative.
+    rng = Random.Xoshiro(17)
+    null = [categorical_weiss(rand(rng,1:3,200,4)) for _ in 1:1000]
+    @test all(r -> r.status === :ok && r.phi >= 0, null)
+    @test 0.025 <= count(r -> r.pvalue < 0.05, null)/1000 <= 0.075
 end
 
 @testset "Movement and tempering" begin

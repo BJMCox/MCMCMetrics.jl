@@ -49,9 +49,11 @@ draws from the common categorical distribution. General Markov chains need
 not satisfy that model. Sparse frequencies also weaken the chi-square limit.
 
 Return `statistic`, `pvalue`, `dof`, fitted `phi`, `correction` and `status`.
-An estimated phi outside [0,1) returns unavailable, without clipping it into
-the model. A large p-value does not establish convergence. Labels have no
-numeric interpretation. Integer repetitions preserve transitions exactly.
+A negative phi estimate within four IID standard errors of zero is sampling
+noise at the model boundary and is clipped to zero. A clearly negative or
+unit estimate returns `:outside_dar1` without a p-value. A large p-value does
+not establish convergence. Labels have no numeric interpretation. Integer
+repetitions preserve transitions exactly.
 """
 function categorical_weiss(x;drawdim=1,chaindim=_default_chaindim(x),counts=nothing)
     s = categorical_summary(x;drawdim,chaindim,counts)
@@ -66,6 +68,10 @@ function categorical_weiss(x;drawdim=1,chaindim=_default_chaindim(x),counts=noth
     denominator = one(T)-sum(abs2,pooled)
     denominator > zero(T) || return merge(invalid,(status=:constant,))
     phi = one(T)+inv(T(n))-(one(T)-same)/denominator
+    # phi = 0 is the model boundary. For IID draws with equal frequencies the
+    # estimate has standard error sqrt(q/((1-q)m(n-1))), q = Σp², and less
+    # otherwise. Clip estimates within four such errors to the boundary.
+    -phi <= 4*sqrt((one(T)-denominator)/(denominator*T(m*(n-1)))) && (phi = max(phi,zero(T)))
     zero(T) <= phi < one(T) || return merge(invalid,(phi,status=:outside_dar1,))
     correction = (one(T)+phi)/(one(T)-phi)
     pearson = sum(T(n)*abs2(s.probability[i,c]-pooled[i])/pooled[i]

@@ -2,7 +2,7 @@ using MCMCMetrics
 using Test
 using Statistics
 using StructArrays: StructArray
-import ArraysOfArrays, SpecialFunctions
+import ArraysOfArrays, Random, SpecialFunctions
 
 @testset "MCMCMetrics" begin
     include("input.jl")
