@@ -21,8 +21,9 @@ end
 """
     bfmi(energy; drawdim=1, chaindim, counts=nothing)
 
-Estimate E-BFMI per chain as mean squared successive energy difference divided
-by the unbiased energy variance. Input must contain full Hamiltonian energy,
+Estimate E-BFMI per chain as the sum of squared successive energy differences
+divided by the sum of squared deviations from the mean energy, as in Betancourt
+(2016) and Stan. Input must contain full Hamiltonian energy,
 including kinetic energy. A log-posterior column is insufficient. Integer
 repetitions include zero-movement transitions without expanding the chain.
 Constant energies return NaN. No diagnostic threshold is imposed.
