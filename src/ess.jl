@@ -275,8 +275,12 @@ end
 function _mean_autocov(z::AbstractArray{T}, lag::Integer) where {T}
     n, m = size(z, 1), size(z, 2)
     result = zero(T)
-    @inbounds for c in 1:m, i in 1:(n - lag)
-        result += z[i, c] * z[i + lag, c]
+    @inbounds for c in 1:m
+        s = zero(T)
+        @simd for i in 1:(n - lag)
+            s = muladd(z[i, c], z[i + lag, c], s)
+        end
+        result += s
     end
     result / T(n) / T(m)
 end
