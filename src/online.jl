@@ -3,50 +3,22 @@
                       threshold=nothing, max_lag=nothing, max_tree_depth=nothing,
                       observation_shape=nothing, metric=nothing, names=nothing)
 
-Accumulate independent chains in `Float32` or `Float64`, without retaining draws.
-Real observations convert to the state's type, as in `setindex!` on a `Vector{T}`;
-draws that overflow it are rejected as nonfinite. Optional distinct `names`, one per
-parameter in linear order, add a `name` column to `diagnostics`. The selected metrics share
-anchored, scaled centered moments, using O(parameters × chains) storage.
+Accumulate independent chains in `Float32` or `Float64` without retaining draws.
+Real observations convert to `T`, as in a `Vector{T}`; values that overflow `T`
+are rejected as nonfinite. Choose `metrics` at construction. The
+[Online diagnostics](@ref) guide lists each metric, its keywords, storage and
+assumptions. Optional distinct `names`, one per parameter in linear order, add a
+`name` column to `diagnostics`.
 
-Select `:mcse_mean`, `:ess_mean`, or `:iact_mean` for per-chain raw-mean
-precision from dyadic nonoverlapping batch means, using
-O(parameters × chains × log(n)) storage and amortized constant work per parameter
-and draw. At n draws, use width
-`2^floor(floor(log2(n))/2)` and sample variance of the complete batch means.
-The mean, marginal variance and MCSE denominator use all n observations.
-Zero estimated long-run variance gives unavailable precision; ESS is not capped.
-Consistency requires appropriate mixing and moment conditions; for example a
-strong Brownian approximation with uniform partial-sum error `o(n^(1/4))`,
-together with ergodic first/second moments and positive long-run variance.
+`push!` takes one parameter-shaped draw and an explicit `chain`. `append!` takes
+batch array axes and integer repetition `counts`. With `chain`, its layout is
+draws × parameter dimensions. Without `chain`, the input holds every chain.
+Malformed chunks are rejected before any draw is consumed.
 
-`:indicator` applies that estimator to `I(x <= threshold)`. Supply a finite
-scalar or parameter-shaped `threshold`, copied and converted to T at construction.
-`:autocor` requires explicit `max_lag >= 0` and retains a bounded ring plus
-compensated lag sums in O(parameters × chains × max_lag) storage, re-centered
-after every n/8 draws. Compressed runs
-advance precision in O(parameters × log(n)) work and lags with at most max_lag
-boundary draws, independent of the logical repetition count. Time-dependent
-configurations do not support `merge!`.
-
-Auxiliary choices are `:bfmi`, `:divergence`, `:acceptance`, `:tree_depth`,
-`:leapfrog_steps`, `:importance`, `:waic`, `:jump_distance`, `:mc_cov`, and
-`:ess_multivariate`. These use separate family snapshots, without repeating
-whole-chain results in parameter rows. Tree depth requires `max_tree_depth`;
-WAIC requires fixed `observation_shape`. Jump distance optionally takes a copied
-SPD `metric` matrix in T. Full vector precision explicitly costs
-O(parameters² × chains × log(n)); all other auxiliary storage is fixed in n.
-All auxiliary configurations reject `merge!`.
-
-`push!` accepts one parameter-shaped draw and an explicit `chain`.
-`append!` accepts batch array axes and integer repetition `counts`. With `chain`,
-its default layout is draws × parameter dimensions. Without `chain`, its input
-must contain every chain. Reject malformed chunks before consuming any draw.
-
-One lock protects each chain. Chunk updates lock once, and snapshots lock all
-chains in ascending order. Callers must preserve each chain's chronological order
-and keep input arrays unchanged during a call. `empty!` requires producers from
-the previous sampling cycle to finish first.
+One lock protects each chain. Callers preserve each chain's draw order, keep
+inputs unchanged during a call, and finish producers before `empty!`. Ordered
+and auxiliary metrics reject `merge!`. For a live display, `progress_summary`
+reads `(n_draws, max_rhat, min_ess)` without copying the state.
 """
 struct OnlineDiagnostics{T,Metrics,N,S,B,K}
     shape::NTuple{N,Int}
