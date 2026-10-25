@@ -199,16 +199,18 @@ function iact(x; estimator::Symbol=:geyer, autocov::Symbol=:direct,
     budget = _lag_budget(d, max_lag_work)
     T = _floattype(d)
     values = Matrix{T}(undef, length(d.chains), prod(d.shape))
-    for p in 1:prod(d.shape), c in eachindex(d.chains)
-        if isnothing(d.counts) && estimator === :geyer && autocov === :direct
-            chain = view(d.chains[c], :, p)
-            effective, _ = _geyer_ess_result(reshape(chain, :, 1))
-            values[c, p] = T(length(chain)) / effective
-            continue
+    _foreach_parameter(prod(d.shape)) do p
+        for c in eachindex(d.chains)
+            if isnothing(d.counts) && estimator === :geyer && autocov === :direct
+                chain = view(d.chains[c], :, p)
+                effective, _ = _geyer_ess_result(reshape(chain, :, 1))
+                values[c, p] = T(length(chain)) / effective
+                continue
+            end
+            runs = _single_chain_runs(d, p, c)
+            effective, _ = _run_ess_result(runs; estimator, autocov, window, max_lag_work=budget)
+            values[c, p] = T(runs.n) / effective
         end
-        runs = _single_chain_runs(d, p, c)
-        effective, _ = _run_ess_result(runs; estimator, autocov, window, max_lag_work=budget)
-        values[c, p] = T(runs.n) / effective
     end
     _parameter_result(values, _chain_result_shape(x, d, chaindim))
 end

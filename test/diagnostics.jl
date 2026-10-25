@@ -28,6 +28,16 @@
     @test iact(ragged) ≈ reshape([iact(x[:, 1]), iact(x[1:8, 2])], 2, 1)
 end
 
+@testset "Parameter tasks match separate calls" begin
+    x = [sin(0.9i + 2c + k) + 0.5cos(2.3i * c * k) for i in 1:60, c in 1:4, k in 1:16]
+    separate(f) = [f(x[:, :, k]) for k in axes(x, 3)]
+    result = diagnostics(x)
+    @test result.rhat == rhat(x) == separate(rhat)
+    @test result.ess_bulk == ess(x) == separate(ess)
+    @test result.mcse_mean == mcse(x) == separate(mcse)
+    @test iact(x) == reduce(hcat, separate(iact))
+end
+
 @testset "A non-finite parameter keeps the other rows" begin
     z = [sin(0.9i + 2c + k) + 0.5cos(2.3i * c * k) for i in 1:40, c in 1:4, k in 1:3]
     z[5, 2, 3] = Inf

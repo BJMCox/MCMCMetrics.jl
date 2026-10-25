@@ -24,7 +24,7 @@ function diagnostics(x; drawdim=1, chaindim=_default_chaindim(x), counts=nothing
     names = (:rhat, :ess_bulk, :ess_tail, :mcse_mean)
     values = NamedTuple{names}(ntuple(_ -> Vector{T}(undef, P), length(names)))
     status = NamedTuple{names}(ntuple(_ -> Vector{Symbol}(undef, P), length(names)))
-    for p in 1:P
+    _foreach_parameter(P) do p
         for (j, (value, s)) in enumerate(_diagnostic_metrics(d, p, budget))
             values[j][p], status[j][p] = value, s
         end

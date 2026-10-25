@@ -21,10 +21,26 @@ _parameter_result(values, shape::Tuple) = reshape(values, shape)
 # A typed result vector keeps the return type inferable for any chain view type.
 function _parameter_values(f::F, d::_Draws{T}) where {F,T}
     values = Vector{T}(undef, prod(d.shape))
-    for p in eachindex(values)
-        values[p] = f(p)
-    end
+    _foreach_parameter(p -> values[p] = f(p), length(values))
     values
+end
+
+# One task per parameter. Each result depends only on its own parameter, so
+# results do not depend on the thread count.
+function _foreach_parameter(f::F, P) where {F}
+    tasks = [Threads.@spawn f(p) for p in 1:P]
+    failure = nothing
+    for task in tasks
+        try
+            wait(task)
+        catch error
+            isnothing(failure) && (failure = error)
+        end
+    end
+    # Throw the lowest failing parameter's own exception, as a serial loop would.
+    failure isa TaskFailedException && throw(failure.task.exception)
+    isnothing(failure) || throw(failure)
+    nothing
 end
 
 _count(::_Draws{T,C,Nothing}, c, i) where {T,C} = 1
