@@ -37,8 +37,9 @@ their precision. Integer repetition counts support compressed states without
 expansion. FFTW provides optional, explicitly selected autocovariances.
 
 Load FlexiChains, MCMCChains, or InferenceObjects to enable optional chain
-adapters. Calls such as `MCMCMetrics.diagnostics(chain)` return results keyed by
-parameter, preserving component shapes, numeric precision, and metric statuses.
+adapters. Calls such as `MCMCMetrics.rhat(chain)` return results keyed by
+parameter in the chain's order, preserving component shapes and numeric precision.
+`MCMCMetrics.diagnostics(chain)` returns one report with a `parameter` column.
 See the [adapter guide](https://bjmcox.github.io/MCMCMetrics.jl/adapters/).
 
 ## Online diagnostics

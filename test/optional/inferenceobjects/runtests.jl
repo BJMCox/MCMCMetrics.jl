@@ -18,10 +18,15 @@ import InferenceObjects, DimensionalData
     ignored = InferenceObjects.namedtuple_to_dataset((x=fill(NaN, 64, 4),))
     data = InferenceObjects.InferenceData(; posterior,
         warmup_posterior=ignored, sample_stats=ignored)
-    for (f, kwargs) in ((rhat, (;)), (diagnostics, (;)), (autocor, (; lags=0:3)))
+    for (f, kwargs) in ((rhat, (;)), (autocor, (; lags=0:3)))
         @test isequal(f(data; kwargs...),
             Dict(:x => f(x; kwargs...), :beta => f(beta; kwargs...)))
     end
+    @test collect(keys(rhat(data))) == [:x, :beta]
+    # Float32 x and Float64 beta share the report's widened columns.
+    @test isequal(collect(diagnostics(data)),
+        [[merge((parameter=:x,), row) for row in diagnostics(x)];
+            [merge((parameter=:beta,), row) for row in diagnostics(beta)]])
     @test rhat(data)[:x] === rhat(x)
     @test rhat(posterior; parameters=(:beta,)) == Dict(:beta => rhat(beta))
 end
