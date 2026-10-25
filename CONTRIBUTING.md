@@ -58,12 +58,12 @@ separately on Julia 1.10 and current stable Julia on Linux. The workflow retains
 documentation and coverage reports as build artifacts.
 
 The Linux stable-Julia core and adapter jobs upload coverage for `src` and `ext` to
-[Codecov](https://app.codecov.io/gh/BJMCox/MCMCMetrics.jl) through GitHub OIDC.
+[Codecov](https://app.codecov.io/gh/JuliaBayes/MCMCMetrics.jl) through GitHub OIDC.
 The upload needs no stored Codecov token. Upload errors fail the job.
 
 GitHub Pages uses Actions as its publishing source. After the test and docs jobs
 pass on `main`, the deployment job publishes
-[the documentation](https://bjmcox.github.io/MCMCMetrics.jl/).
+[the documentation](https://juliabayes.github.io/MCMCMetrics.jl/).
 
 ## Dependencies
 
