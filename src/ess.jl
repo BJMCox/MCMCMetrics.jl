@@ -11,11 +11,17 @@ Indicators and diagnostic arithmetic retain the observation floating type.
 
 By default, split each chain in half and discard its middle draw when odd.
 Compute ranks and quantile thresholds after splitting. At least four retained
-draws per split chain are required. A constant chain or transformed chain
-returns a typed `NaN`. Integer repetition counts retain the exact run order,
-including runs crossing split boundaries, without expanded storage.
+draws per split chain are required. Identical pooled values, or identical
+transformed values, return a typed `NaN`; a single constant chain does not.
+So does a parameter with a non-finite positive-count draw, here and in
+[`mcse`](@ref), without affecting other parameters. Integer repetition counts
+retain the exact run order, including runs crossing split boundaries, without
+expanded storage.
 
-The direct autocovariance divides by the chain length at every lag. The Geyer
+The direct autocovariance divides by the chain length at every lag. Dense
+draws (all counts one) use the first `16*ndigits(n; base=2)` lags directly and
+any later lags, which only slowly mixing chains reach, from one internal radix-2
+FFT of the same quantity. This bounds the cost by O(n log n). The Geyer
 estimator truncates at the first nonpositive pair of autocorrelations, then
 reduces each retained pair to the minimum of all preceding pairs (IMS).
 It uses every available complete pair, without a lag cap or ESS cap.
@@ -31,30 +37,34 @@ references call half this quantity the integrated autocorrelation time.
 
 `autocov=:fft` requires loading FFTW and dense draws; it changes only the
 autocovariance computation. Direct arithmetic remains the default. Compressed
-and Sokal direct calculations limit cursor work to `max_lag_work=100_000_000`
-per parameter and transform (two stored runs per lag is the charged upper
-bound). Exceeding the budget throws a work-limit exception; increase it explicitly to permit more
-work. Estimators never truncate silently or expand repetitions.
+draws with a count above one limit direct cursor work to `max_lag_work` per
+parameter and transform (two stored runs per lag is the charged upper bound).
+The default `nothing` means `max(100_000_000, 2S^2)` for `S` stored
+positive-count draws, enough for about `S` lags. Exceeding the budget throws a work-limit exception;
+increase it explicitly to permit more work. Estimators never truncate silently
+or expand repetitions.
 
 See Geyer (1992), doi:10.1214/ss/1177011137, and Vehtari et al. (2021),
 doi:10.1214/20-BA1221. The latter supplies the multi-chain variance estimator.
 """
 function ess(x; kind::Symbol=:bulk, split::Bool=true, estimator::Symbol=:geyer,
     autocov::Symbol=:direct, prob::Real=0.95, interval=nothing,
-    window::Real=5, max_lag_work::Integer=100_000_000,
+    window::Real=5, max_lag_work::Union{Integer,Nothing}=nothing,
     drawdim=1, chaindim=_default_chaindim(x), counts=nothing)
     _check_ess_options(kind, estimator, autocov, prob, interval)
     _check_window(window, max_lag_work)
-    d = _draws(x; drawdim, chaindim, counts)
+    d = _draws(x; drawdim, chaindim, counts, nonfinite=true)
     _check_fft_counts(d, autocov)
-    values = [_ess_parameter_result(d, p; kind, split, prob, interval,
-        estimator, autocov, window, max_lag_work)[1]
-        for p in 1:prod(d.shape)]
+    budget = _lag_budget(d, max_lag_work)
+    values = _parameter_values(d) do p
+        _ess_parameter_result(d, p; kind, split, prob, interval,
+            estimator, autocov, window, max_lag_work=budget)[1]
+    end
     _parameter_result(values, d.shape)
 end
 
 """
-    mcse(x; estimand=:mean, split=true, estimator=:geyer, autocov=:direct,
+    mcse(x; kind=:mean, split=true, estimator=:geyer, autocov=:direct,
          prob=0.5, window=5, batch_size=nothing, kwargs...)
 
 Estimate the Monte Carlo standard error of the mean as the pooled raw sample
@@ -63,7 +73,7 @@ contribute to the standard deviation, including middle draws discarded by ESS
 splitting. The same finite-variance and reversibility assumptions as [`ess`](@ref)
 apply. Integer counts are supported without expansion.
 
-For `estimand=:variance` use the sample variance (divisor N-1) of the centered
+For `kind=:variance` use the sample variance (divisor N-1) of the centered
 squared influence process, divided by its own ESS; `:sd` divides that MCSE
 by twice the pooled population SD. These require a finite fourth moment and
 a CLT for that process.
@@ -80,34 +90,48 @@ The default batch size is `max(1, isqrt(shortest_logical_chain_length))`.
 Each chain needs at least two full batches. Nonoverlapping batches discard
 the incomplete final batch; overlapping batches use every full window and
 the full-chain mean. Chain contributions are weighted by their retained
-lengths. See Flegal and Jones (2010), doi:10.1214/09-AOS735.
+lengths. A constant chain contributes zero; the MCSE is `NaN` only when
+every chain has zero long-run variance. See Flegal and Jones (2010), doi:10.1214/09-AOS735.
 Batch work limits both full windows and local run-overlap visits by
-`max_lag_work`, without storing windows.
+`max_lag_work`, without storing windows. The former keyword `estimand` is
+deprecated in favour of `kind`.
 """
-function mcse(x; estimand::Symbol=:mean, split::Bool=true, estimator::Symbol=:geyer,
+function mcse(x; kind::Symbol=:mean, split::Bool=true, estimator::Symbol=:geyer,
     autocov::Symbol=:direct, prob::Real=0.5, window::Real=5,
-    batch_size=nothing, max_lag_work::Integer=100_000_000,
-    drawdim=1, chaindim=_default_chaindim(x), counts=nothing)
-    estimand in (:mean, :variance, :sd, :quantile, :median) ||
-        throw(ArgumentError("unsupported MCSE estimand"))
+    batch_size=nothing, max_lag_work::Union{Integer,Nothing}=nothing,
+    drawdim=1, chaindim=_default_chaindim(x), counts=nothing, estimand=nothing)
+    isnothing(estimand) || return _deprecated_mcse(x, kind, estimand; split, estimator,
+        autocov, prob, window, batch_size, max_lag_work, drawdim, chaindim, counts)
+    kind in (:mean, :variance, :sd, :quantile, :median) ||
+        throw(ArgumentError("unsupported MCSE kind"))
     batch = estimator in (:batchmeans, :overlapping)
     if batch
-        estimand === :mean || throw(ArgumentError("batch estimators support mean MCSE"))
+        kind === :mean || throw(ArgumentError("batch estimators support mean MCSE"))
         autocov === :direct || throw(ArgumentError("batch estimators do not use FFT autocovariances"))
     else
         _check_geyer(estimator, autocov)
     end
     _check_window(window, max_lag_work)
-    estimand in (:quantile, :median) && _check_ess_options(:quantile, :geyer, :direct, prob, nothing)
-    d = _draws(x; drawdim, chaindim, counts)
+    kind in (:quantile, :median) && _check_ess_options(:quantile, :geyer, :direct, prob, nothing)
+    d = _draws(x; drawdim, chaindim, counts, nonfinite=true)
     _check_fft_counts(d, autocov)
-    values = [_precision_parameter_result(d, p; estimand, split, estimator,
-        autocov, prob, window, batch_size, max_lag_work)[1] for p in 1:prod(d.shape)]
+    budget = _lag_budget(d, max_lag_work)
+    values = _parameter_values(d) do p
+        _precision_parameter_result(d, p; kind, split, estimator,
+            autocov, prob, window, batch_size, max_lag_work=budget)[1]
+    end
     _parameter_result(values, d.shape)
 end
 
+function _deprecated_mcse(x, kind, estimand; kwargs...)
+    Base.depwarn("`mcse(x; estimand=...)` is deprecated, use `mcse(x; kind=...)`", :mcse)
+    kind === :mean || kind === estimand ||
+        throw(ArgumentError("pass the MCSE kind once, as `kind`"))
+    mcse(x; kind=estimand, kwargs...)
+end
+
 """
-    autocor(x; lags=nothing, autocov=:direct, max_lag_work=100_000_000,
+    autocor(x; lags=nothing, autocov=:direct, max_lag_work=nothing,
             drawdim=1, chaindim, counts=nothing)
 
 Return direct autocorrelations with shape lag × chain × parameter axes.
@@ -120,12 +144,13 @@ Compressed direct work uses the cursor budget described by [`ess`](@ref),
 separately for each chain and parameter. Dense direct work remains uncapped.
 """
 function autocor(x; lags=nothing, autocov::Symbol=:direct,
-    max_lag_work::Integer=100_000_000, drawdim=1,
+    max_lag_work::Union{Integer,Nothing}=nothing, drawdim=1,
     chaindim=_default_chaindim(x), counts=nothing)
     d = _draws(x; drawdim, chaindim, counts)
     _check_geyer(:geyer, autocov)
     _check_window(5, max_lag_work)
     _check_fft_counts(d, autocov)
+    budget = _lag_budget(d, max_lag_work)
     lagvalues = isnothing(lags) ? collect(0:min(100, minimum(d.lengths) - 1)) : collect(lags)
     all(k -> k isa Integer && 0 <= k < minimum(d.lengths), lagvalues) ||
         throw(ArgumentError("lags must be integers within each chain"))
@@ -145,7 +170,7 @@ function autocor(x; lags=nothing, autocov::Symbol=:direct,
         runs = _single_chain_runs(d, p, c)
         z, _ = _scaled_samples(runs.values, T)
         z .-= _weighted_mean(z, runs.weights)
-        covariance = _autocov_function(z, runs, autocov, max_lag_work)
+        covariance = _autocov_function(z, runs, autocov, budget)
         v = covariance(0)
         for (i, k) in enumerate(lagvalues)
             values[i, c, p] = v > zero(T) ? covariance(k) / v : T(NaN)
@@ -167,24 +192,27 @@ Integer counts use exact run overlaps. `estimator=:sokal`, `window=5`,
 `autocov=:fft`, and `max_lag_work` follow [`ess`](@ref).
 """
 function iact(x; estimator::Symbol=:geyer, autocov::Symbol=:direct,
-    window::Real=5, max_lag_work::Integer=100_000_000,
+    window::Real=5, max_lag_work::Union{Integer,Nothing}=nothing,
     drawdim=1, chaindim=_default_chaindim(x), counts=nothing)
     _check_geyer(estimator, autocov)
     d = _draws(x; drawdim, chaindim, counts)
     _check_window(window, max_lag_work)
     _check_fft_counts(d, autocov)
+    budget = _lag_budget(d, max_lag_work)
     T = _floattype(d)
     values = Matrix{T}(undef, length(d.chains), prod(d.shape))
-    for p in 1:prod(d.shape), c in eachindex(d.chains)
-        if isnothing(d.counts) && estimator === :geyer && autocov === :direct
-            chain = view(d.chains[c], :, p)
-            effective, _ = _geyer_ess_result(reshape(chain, :, 1))
-            values[c, p] = T(length(chain)) / effective
-            continue
+    _foreach_parameter(prod(d.shape)) do p
+        for c in eachindex(d.chains)
+            if isnothing(d.counts) && estimator === :geyer && autocov === :direct
+                chain = view(d.chains[c], :, p)
+                effective, _ = _geyer_ess_result(reshape(chain, :, 1))
+                values[c, p] = T(length(chain)) / effective
+                continue
+            end
+            runs = _single_chain_runs(d, p, c)
+            effective, _ = _run_ess_result(runs; estimator, autocov, window, max_lag_work=budget)
+            values[c, p] = T(runs.n) / effective
         end
-        runs = _single_chain_runs(d, p, c)
-        effective, _ = _run_ess_result(runs; estimator, autocov, window, max_lag_work)
-        values[c, p] = T(runs.n) / effective
     end
     _parameter_result(values, _chain_result_shape(x, d, chaindim))
 end
@@ -234,6 +262,7 @@ function _ess_parameter_result(d, p; kind=:bulk, split=true, prob=0.95,
     interval=nothing, samples=nothing, ranked=nothing,
     estimator=:geyer, autocov=:direct, window=5, max_lag_work=100_000_000)
     T = _floattype(d)
+    d.finite[p] || return (T(NaN), :nonfinite)
     all(==(first(d.lengths)), d.lengths) || return (T(NaN), :unequal_chain_lengths)
     first(d.lengths) ÷ (split ? 2 : 1) >= 4 || return (T(NaN), :insufficient_draws)
     if !isnothing(d.counts) || estimator !== :geyer || autocov !== :direct
@@ -264,21 +293,88 @@ end
 # indicator x <= quantile, only the lower order statistic is needed. Comparing
 # original observations avoids losing integer distinctions in a float threshold.
 function _quantile_indicator(x, prob::Real, ::Type{T}) where {T}
-    # The cutoff is an integer rank. Exact probability arithmetic prevents
-    # multiplication or addition from rounding it to the next observation.
-    probability = Rational{BigInt}(prob)
-    index = 1 + Int(fld((length(x) - 1) * numerator(probability), denominator(probability)))
-    cutoff = partialsort!(collect(vec(x)), index)
+    cutoff = partialsort!(collect(vec(x)), _cutoff_rank(length(x), prob))
     map(v -> T(v <= cutoff), x)
+end
+
+# The cutoff is an integer rank. Exact probability arithmetic prevents
+# multiplication or addition from rounding it to the next observation.
+function _cutoff_rank(total, prob)
+    probability = Rational{BigInt}(prob)
+    1 + Int(fld((total - 1) * numerator(probability), denominator(probability)))
 end
 
 function _mean_autocov(z::AbstractArray{T}, lag::Integer) where {T}
     n, m = size(z, 1), size(z, 2)
     result = zero(T)
-    @inbounds for c in 1:m, i in 1:(n - lag)
-        result += z[i, c] * z[i + lag, c]
+    for c in 1:m
+        s = zero(T)
+        @simd for i in 1:(n - lag)
+            s = muladd(z[i, c], z[i + lag, c], s)
+        end
+        result += s
     end
     result / T(n) / T(m)
+end
+
+# Direct lags are exact in order and cheap for fast mixing. A slowly mixing
+# chain needs O(n) lags, so later lags come from one O(n log n) transform.
+function _dense_autocov(z::AbstractMatrix{T}) where {T}
+    first_transformed = 16 * ndigits(size(z, 1); base=2)
+    transformed = T[]
+    function covariance(k)
+        k < first_transformed && return _mean_autocov(z, k)
+        isempty(transformed) && append!(transformed, _radix2_autocov(z))
+        transformed[k + 1]
+    end
+end
+
+# Same result as _mean_autocov at every lag, up to rounding. Two real chains
+# share one complex transform, and only the sum of their spectra is needed.
+function _radix2_autocov(z::AbstractMatrix{T}) where {T}
+    n, m = size(z)
+    N = nextpow(2, 2n - 1)
+    twiddles = [cispi(-T(2k) / T(N)) for k in 0:N÷2-1]
+    power = zeros(Complex{T}, N)
+    buffer = Vector{Complex{T}}(undef, N)
+    for c in 1:2:m
+        fill!(buffer, zero(Complex{T}))
+        for i in 1:n
+            buffer[i] = complex(z[i, c], c < m ? z[i, c + 1] : zero(T))
+        end
+        _radix2_fft!(buffer, twiddles, false)
+        for k in 0:N-1
+            power[k + 1] += (abs2(buffer[k + 1]) + abs2(buffer[mod(N - k, N) + 1])) / T(2)
+        end
+    end
+    _radix2_fft!(power, twiddles, true)
+    [real(power[k + 1]) / T(N) / T(n) / T(m) for k in 0:n-1]
+end
+
+function _radix2_fft!(a::Vector{Complex{T}}, twiddles, inverse) where {T}
+    N = length(a)
+    j = 0
+    for i in 1:N-1
+        bit = N >> 1
+        while j & bit != 0
+            j ⊻= bit
+            bit >>= 1
+        end
+        j |= bit
+        i < j && ((a[i + 1], a[j + 1]) = (a[j + 1], a[i + 1]))
+    end
+    half = 1
+    while half < N
+        stride = N ÷ 2half
+        for s in 0:2half:N-1, k in 0:half-1
+            w = twiddles[k * stride + 1]
+            v = a[s + k + half + 1] * (inverse ? conj(w) : w)
+            u = a[s + k + 1]
+            a[s + k + 1], a[s + k + half + 1] = u + v, u - v
+        end
+        half <<= 1
+    end
+    a
 end
 
 function _geyer_ess_result(x::AbstractMatrix)
@@ -286,12 +382,13 @@ function _geyer_ess_result(x::AbstractMatrix)
     n, m = size(x)
     n >= 4 || return (T(NaN), :insufficient_draws)
     origin, scale = _sample_origin_scale(x, T)
+    # Only identical pooled values are unavailable; see _rhat_parameter_result.
+    iszero(scale) && return (T(NaN), :constant)
     means, variances = Vector{T}(undef, m), Vector{T}(undef, m)
     z = Matrix{T}(undef, n, m)
     for c in 1:m
         chain = view(x, :, c)
-        chain_origin, chain_scale = _sample_origin_scale(chain, T)
-        iszero(chain_scale) && return (T(NaN), :constant)
+        chain_origin, _ = _sample_origin_scale(chain, T)
         centered = view(z, :, c)
         # Center within each chain before scaling. A distant chain must not
         # round a small chain's distinct values to the same global residual.
@@ -301,16 +398,21 @@ function _geyer_ess_result(x::AbstractMatrix)
         means[c] = _centered_value(chain_origin, origin, T) / scale + local_mean
         centered .-= local_mean
     end
+    _combined_ess(_dense_autocov(z), means, variances, n, :geyer, 5)
+end
+
+# Multi-chain autocorrelation from the pooled variance estimate of Vehtari et
+# al. (2021). `covariance(k)` averages the chains' lag-k autocovariances.
+function _combined_ess(covariance::F, means::Vector{T}, variances, n, estimator, window) where {F,T}
+    m = length(means)
     W = Statistics.mean(variances)
-    varplus = T(n - 1) / T(n) * W
-    m > 1 && (varplus += Statistics.var(means))
+    varplus = T(n - 1) / T(n) * W + (m > 1 ? Statistics.var(means) : zero(T))
     isfinite(varplus) && varplus > zero(T) || return (T(NaN), :estimator_failed)
     # For a single unsplit chain use the ordinary normalized autocovariance.
-    rho = m == 1 ? k -> _mean_autocov(z, k) / varplus :
-        k -> one(T) - (W - _mean_autocov(z, k)) / varplus
-    tau = _window_tau(rho, n, T, :geyer, 5)
-    isfinite(tau) && tau > zero(T) || return (T(NaN), :estimator_failed)
-    (T(n) * T(m) / tau, :ok)
+    rho = m == 1 ? k -> covariance(k) / varplus :
+        k -> one(T) - (W - covariance(k)) / varplus
+    tau = _window_tau(rho, n, T, estimator, window)
+    isfinite(tau) ? (T(n) * T(m) / tau, :ok) : (T(NaN), :estimator_failed)
 end
 
 function _mcse_parameter_result(d, p; split=true, samples=nothing)

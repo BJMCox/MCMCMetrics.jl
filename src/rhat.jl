@@ -13,8 +13,10 @@ Splitting omits the middle draw of odd-length chains before ranking or folding.
 
 `counts` contains exact nonnegative integer repetition counts, never importance
 weights. Logical chain lengths must match. Computation uses stored runs without
-expanding them. A constant original or split chain, including a constant folded
-chain, makes the corresponding statistic unavailable (`NaN`).
+expanding them. Identical pooled values, or identical folded values, make R-hat
+unavailable (`NaN`). A constant chain among varying chains gives a large R-hat,
+and `Inf` when every split chain is constant. A parameter with a non-finite
+positive-count draw returns `NaN` without affecting other parameters.
 
 Float32 and Float64 observations retain their arithmetic and result type.
 Integer observations use their Julia floating counterpart, with exact integer
@@ -24,11 +26,10 @@ otherwise an array with the parameter shape.
 function rhat(x; kind=:rank, split=true, drawdim=1, chaindim=_default_chaindim(x), counts=nothing)
     kind in (:rank, :basic) || throw(ArgumentError("R-hat kind must be :rank or :basic"))
     split isa Bool || throw(ArgumentError("split must be a Bool"))
-    d = _draws(x; drawdim, chaindim, counts)
+    d = _draws(x; drawdim, chaindim, counts, nonfinite=true)
     length(d.chains) >= 2 || throw(ArgumentError("R-hat requires at least two independent chains"))
     all(==(first(d.lengths)), d.lengths) || throw(ArgumentError("R-hat requires equal logical chain lengths"))
-    values = [_rhat_parameter_result(d, p; kind, split).value for p in 1:prod(d.shape)]
-    _parameter_result(values, d.shape)
+    _parameter_result(_parameter_values(p -> _rhat_parameter_result(d, p; kind, split).value, d), d.shape)
 end
 
 # The exact split clipping and nearer-tail rank transform follow BAT.jl's
@@ -61,28 +62,30 @@ end
 function _rank_normalize(values::AbstractVector, weights::AbstractVector{Int}, ::Type{T}=_floattype(eltype(values)), order=sortperm(values)) where {T}
     total = foldl(Base.Checked.checked_add, weights; init=0)
     scores = Vector{T}(undef, length(values))
-    before = 0
-    i = 1
-    while i <= length(order)
-        j = i + 1
-        mass = weights[order[i]]
-        while j <= length(order) && values[order[j]] == values[order[i]]
-            mass = Base.Checked.checked_add(mass, weights[order[j]])
-            j += 1
-        end
+    _foreach_tie(values, weights, order) do group, before, mass
         after = total - before - mass
         # Blom's tied rank probability, evaluated from the nearer tail so
         # large logical counts cannot round an upper-tail probability to one.
         probability = (T(min(before, after)) + T(mass) / T(2) + T(1) / T(8)) / (T(total) + T(1) / T(4))
         score = -sqrt(T(2)) * SpecialFunctions.erfcinv(T(2) * min(probability, T(1) / T(2)))
-        before > after && (score = -score)
-        for k in i:j-1
-            scores[order[k]] = score
+        scores[group] .= before > after ? -score : score
+    end
+    scores
+end
+
+# Call f(indices, mass_before, mass) for each group of tied values in sorted order.
+function _foreach_tie(f::F, values, weights, order) where {F}
+    before, i = 0, 1
+    while i <= length(order)
+        j, mass = i + 1, weights[order[i]]
+        while j <= length(order) && values[order[j]] == values[order[i]]
+            mass = Base.Checked.checked_add(mass, weights[order[j]])
+            j += 1
         end
+        f(view(order, i:j-1), before, mass)
         before += mass
         i = j
     end
-    scores
 end
 
 function _folded_values(values, weights, order=sortperm(values))
@@ -122,10 +125,13 @@ end
 
 function _run_moments(values, weights, ranges, n)
     T = eltype(values)
-    means = [sum(i -> (T(weights[i]) / T(n)) * values[i], r) for r in ranges]
-    variances = [sum(i -> (T(weights[i]) / T(n - 1)) * abs2(values[i] - means[c]), r)
+    # Center on each chain's first value so a constant chain has exactly zero variance.
+    shifts = [values[first(r)] for r in ranges]
+    deltas = [sum(i -> (T(weights[i]) / T(n)) * (values[i] - shifts[c]), r)
         for (c, r) in enumerate(ranges)]
-    (; means, variances)
+    variances = [sum(i -> (T(weights[i]) / T(n - 1)) * abs2(values[i] - shifts[c] - deltas[c]), r)
+        for (c, r) in enumerate(ranges)]
+    (; means=shifts .+ deltas, variances)
 end
 
 function _basic_run_moments(values, weights, ranges, n, ::Type{T}) where {T}
@@ -153,14 +159,15 @@ end
 
 function _rhat_parameter_result(d, p; kind=:rank, split=true, runs=nothing, ranked=nothing)
     T = _floattype(d)
+    d.finite[p] || return (value=T(NaN), status=:nonfinite)
     length(d.chains) >= 2 || return (value=T(NaN), status=:insufficient_chains)
     all(==(first(d.lengths)), d.lengths) || return (value=T(NaN), status=:unequal_chain_lengths)
     n = first(d.lengths)
     n >= (split ? 4 : 2) || return (value=T(NaN), status=:insufficient_draws)
     isnothing(runs) && (runs = _parameter_runs(d, p, split))
-    if any(r -> all(i -> runs.values[i] == runs.values[first(r)], r), runs.ranges)
-        return (value=T(NaN), status=:constant)
-    end
+    # Like posterior, only identical pooled values make R-hat unavailable. A
+    # stuck chain keeps positive pooled variance and must give a large R-hat.
+    allequal(runs.values) && return (value=T(NaN), status=:constant)
     if kind === :basic
         moments = _basic_run_moments(runs.values, runs.weights, runs.ranges, runs.n, T)
         value = _rhat_from_moments(moments.means, moments.variances, runs.n)
@@ -168,9 +175,7 @@ function _rhat_parameter_result(d, p; kind=:rank, split=true, runs=nothing, rank
         order = sortperm(runs.values)
         isnothing(ranked) && (ranked = _rank_normalize(runs.values, runs.weights, T, order))
         folded = _rank_normalize(_folded_values(runs.values, runs.weights, order), runs.weights, T)
-        if any(r -> all(i -> folded[i] == folded[first(r)], r), runs.ranges)
-            return (value=T(NaN), status=:constant)
-        end
+        allequal(folded) && return (value=T(NaN), status=:constant)
         bulk = _run_moments(ranked, runs.weights, runs.ranges, runs.n)
         tail = _run_moments(folded, runs.weights, runs.ranges, runs.n)
         value = max(_rhat_from_moments(bulk.means, bulk.variances, runs.n),

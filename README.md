@@ -1,8 +1,8 @@
 # MCMCMetrics.jl
 
-[![CI](https://github.com/BJMCox/MCMCMetrics.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/BJMCox/MCMCMetrics.jl/actions/workflows/CI.yml)
-[![Coverage](https://codecov.io/gh/BJMCox/MCMCMetrics.jl/branch/main/graph/badge.svg)](https://app.codecov.io/gh/BJMCox/MCMCMetrics.jl)
-[![Docs](https://img.shields.io/badge/docs-main-blue.svg)](https://bjmcox.github.io/MCMCMetrics.jl/)
+[![CI](https://github.com/JuliaBayes/MCMCMetrics.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/JuliaBayes/MCMCMetrics.jl/actions/workflows/CI.yml)
+[![Coverage](https://codecov.io/gh/JuliaBayes/MCMCMetrics.jl/branch/main/graph/badge.svg)](https://app.codecov.io/gh/JuliaBayes/MCMCMetrics.jl)
+[![Docs](https://img.shields.io/badge/docs-main-blue.svg)](https://juliabayes.github.io/MCMCMetrics.jl/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE.md)
 
 Batch and online MCMC diagnostics for Julia numeric arrays. Supports R-hat,
@@ -13,7 +13,7 @@ Julia 1.10 or later.
 
 ```julia
 using Pkg
-Pkg.add(url="https://github.com/BJMCox/MCMCMetrics.jl")
+Pkg.add(url="https://github.com/JuliaBayes/MCMCMetrics.jl")
 ```
 
 The package is not yet registered in General. Installation uses the repository.
@@ -37,9 +37,10 @@ their precision. Integer repetition counts support compressed states without
 expansion. FFTW provides optional, explicitly selected autocovariances.
 
 Load FlexiChains, MCMCChains, or InferenceObjects to enable optional chain
-adapters. Calls such as `MCMCMetrics.diagnostics(chain)` return results keyed by
-parameter, preserving component shapes, numeric precision, and metric statuses.
-See the [adapter guide](https://bjmcox.github.io/MCMCMetrics.jl/adapters/).
+adapters. Calls such as `MCMCMetrics.rhat(chain)` return results keyed by
+parameter in the chain's order, preserving component shapes and numeric precision.
+`MCMCMetrics.diagnostics(chain)` returns one report with a `parameter` column.
+See the [adapter guide](https://juliabayes.github.io/MCMCMetrics.jl/adapters/).
 
 ## Online diagnostics
 
@@ -56,10 +57,10 @@ means; modern rank/folded R-hat remains a batch calculation. Independent chains
 can update concurrently. Preserve draw order within each chain and finish old
 producers before resetting the state.
 
-The runtime dependencies are StructArrays, ArraysOfArrays, Statistics,
-LinearAlgebra, SpecialFunctions and LogExpFunctions. Samplers own warmup,
-chain identity and stopping rules.
+The runtime dependencies are StructArrays, ArraysOfArrays, OrderedCollections,
+Statistics, LinearAlgebra, SpecialFunctions and LogExpFunctions. Samplers own
+warmup, chain identity and stopping rules.
 
-[Documentation](https://bjmcox.github.io/MCMCMetrics.jl/) ·
-[Sampler adapters](https://bjmcox.github.io/MCMCMetrics.jl/adapters/) ·
+[Documentation](https://juliabayes.github.io/MCMCMetrics.jl/) ·
+[Sampler adapters](https://juliabayes.github.io/MCMCMetrics.jl/adapters/) ·
 [Development](CONTRIBUTING.md) · [MIT license](LICENSE.md)

@@ -75,8 +75,26 @@ end
     @test rhat(Float32.(run_values); counts=run_counts, split=false) ≈ Float32(value) rtol=8eps(Float32)
 end
 
-@testset "Unavailable R-hat" begin
-    @test isnan(rhat([1.0 2.0; 1.0 2.0; 1.0 3.0; 1.0 4.0]))
-    @test isnan(rhat([0.0 2.0; 0.0 3.0; 1.0 4.0; 2.0 5.0]))
+@testset "Constant chains and unavailable R-hat" begin
+    # References: MCMCDiagnosticTools 0.3.19 rhat on draws × chains × 1 arrays.
+    @test rhat([1.0 2.0; 1.0 2.0; 1.0 3.0; 1.0 4.0]) ≈ 4.26433820742952
+    @test rhat([0.0 2.0; 0.0 3.0; 1.0 4.0; 2.0 5.0]) ≈ 3.0659635970493877
+    x = [sin(0.9i + 2c) + 0.5cos(2.3i * c) for i in 1:200, c in 1:4]
+    stuck = copy(x)
+    stuck[:, 3] .= 5.0
+    half = copy(x)
+    half[1:100, 1] .= 0.0
+    @test rhat(stuck) ≈ 1.5192891659778285
+    @test rhat(stuck; kind=:basic) ≈ 3.5168741287279004
+    @test rhat(half) ≈ 1.2846049029863864
+    @test ess(half; kind=:tail) ≈ 773.6648063348551
+    # A stuck chain must fail convergence thresholds, not hide behind NaN.
+    row = only(diagnostics(stuck))
+    @test row.rhat > 1.01 && all(isfinite, (row.ess_bulk, row.mcse_mean))
+
+    # Chains constant at different values have no within-chain variance.
+    levels = repeat([1.0 2.0 3.0 4.0], 100)
+    @test rhat(levels) == rhat(levels; kind=:basic) == Inf
+    @test isnan(rhat(fill(2.0, 8, 2)))
     @test isnan(rhat([0.0 1.0; 1.0 2.0; 2.0 3.0]))
 end

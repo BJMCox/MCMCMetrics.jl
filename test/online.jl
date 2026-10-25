@@ -1,3 +1,15 @@
+# One thread only interleaves tasks, which cannot expose a missing lock.
+function online_threaded(f, name)
+    if Threads.nthreads() > 1
+        @testset "$name" begin
+            f()
+        end
+    else
+        @info "Skipping \"$name\": run Julia with several threads, e.g. JULIA_NUM_THREADS=4."
+        @test_skip name
+    end
+end
+
 @testset "Online diagnostics" begin
     @testset "Moments and basic R-hat" begin
         for T in (Float32, Float64)
@@ -15,8 +27,22 @@
             @test report.n_draws == [8, 8]
             @test report.n_per_chain[1] == [4, 4]
             @test all(s -> s.rhat_basic === :ok, report.status)
-            @test rhat(state; kind=:basic, split=false) == report.rhat_basic
+            @test rhat(state) == report.rhat_basic
         end
+    end
+
+    @testset "Stuck chain R-hat" begin
+        x = [1.0 5.0; 2.0 5.0; 4.0 5.0; 3.0 5.0]
+        stuck = OnlineDiagnostics(Float64; nchains=2)
+        append!(stuck, x)
+        reference = sqrt(3 / 4 + var(vec(mean(x; dims=1))) / mean(vec(var(x; dims=1))))
+        @test rhat(stuck; kind=:basic, split=false) ≈ reference
+        @test only(diagnostics(stuck)).status.rhat_basic === :ok
+
+        pooled = OnlineDiagnostics(Float64; nchains=2)
+        append!(pooled, fill(5.0, 4, 2))
+        @test isnan(only(rhat(pooled; kind=:basic, split=false)))
+        @test only(diagnostics(pooled)).status.rhat_basic === :constant
     end
 
     @testset "Chunks, repetitions, and axes" begin
@@ -50,7 +76,8 @@
         before = diagnostics(state)
         @test_throws Exception append!(state, [5.0 7.0; 6.0 NaN])
         @test_throws Exception append!(state, [5.0 7.0; 6.0 8.0]; counts=[1 1; 1 -1])
-        @test_throws Exception append!(state, Float32[5 7; 6 8])
+        @test_throws Exception append!(state, ["5" "7"; "6" "8"])
+        @test_throws Exception push!(OnlineDiagnostics(Float32; nchains=1), 1e300; chain=1)
         @test_throws Exception push!(state, [5.0]; chain=1)
         @test_throws Exception push!(state, NaN; chain=1)
         after = diagnostics(state)
@@ -70,6 +97,53 @@
         append!(zero, [NaN, 2.0]; chain=1, counts=[0, 3])
         @test diagnostics(zero).mean[1] == [2.0]
         @test diagnostics(zero).n_per_chain[1] == [3]
+    end
+
+    @testset "Conversion and names" begin
+        converted = OnlineDiagnostics(Float32; nchains=2, parameter_shape=(2,), names=[:a, :b])
+        native = OnlineDiagnostics(Float32; nchains=2, parameter_shape=(2,))
+        x = [0.1 0.2; 0.3 0.4; 0.5 0.6;;; 1 2; 3 4; 5 6]
+        append!(converted, x[1:2, :, :])
+        push!(converted, x[3, 1, :]; chain=1)
+        push!(converted, x[3, 2, :]; chain=2)
+        append!(native, Float32.(x))
+        @test diagnostics(converted).mean == diagnostics(native).mean
+        @test diagnostics(converted).name == [:a, :b]
+    end
+
+    @testset "Pooled precision and progress summary" begin
+        # Replicated batch means over the complete batches of the shortest chain's width.
+        function pooled_oracle(chains)
+            n = minimum(length, chains)
+            b = 2^(floor(Int, log2(n)) ÷ 2)
+            batches = [mean(big.(x[(i-1)*b+1:i*b])) for x in chains for i in 1:length(x)÷b]
+            draws = big.(reduce(vcat, chains))
+            lrv = b * var(batches)
+            (ess=length(draws) * var(draws) / lrv, mcse=sqrt(lrv / length(draws)))
+        end
+        x = [sin(1.3i) + i / 40 for i in 1:100]
+        chains = [x[1:64], 0.5 .+ x[37:100]]
+        state = OnlineDiagnostics(Float64; nchains=2, metrics=(:rhat_basic, :ess_mean, :mcse_mean))
+        append!(state, reduce(hcat, chains))
+        expected = pooled_oracle(chains)
+        @test ess(state; pooled=true) ≈ expected.ess
+        @test mcse(state; pooled=true) ≈ expected.mcse
+        @test ess(state; pooled=true) < sum(ess(state))
+        @test progress_summary(state) == (n_draws=128, max_rhat=rhat(state), min_ess=ess(state; pooled=true))
+
+        append!(state, x[1:36]; chain=2)
+        @test ess(state; pooled=true) ≈ pooled_oracle([chains[1], vcat(chains[2], x[1:36])]).ess
+        # Live snapshots see unequal lengths; the summary keeps R-hat available.
+        longer = vcat(chains[2], x[1:36])
+        variances = [var(chains[1]), var(longer)]
+        means = [mean(chains[1]), mean(longer)]
+        @test isnan(rhat(state))
+        @test progress_summary(state).max_rhat ≈ sqrt(63 / 64 + var(means) / mean(variances))
+
+        vector = OnlineDiagnostics(Float32; nchains=2, parameter_shape=(2,))
+        append!(vector, Float32[1 2; 3 4;;; 5 6; 7 9])
+        summary = progress_summary(vector)
+        @test summary.max_rhat == maximum(rhat(vector)) && isnan(summary.min_ess)
     end
 
     @testset "Snapshot ownership and reset" begin
@@ -118,7 +192,7 @@
         @test diagnostics(almostfull).n_per_chain[1] == [0, typemax(Int)]
     end
 
-    @testset "Concurrent producers and snapshots" begin
+    online_threaded("Concurrent producers and snapshots") do
         state = OnlineDiagnostics(Float64; nchains=2)
         @sync for c in 1:2, _ in 1:4
             Threads.@spawn for _ in 1:20
@@ -152,6 +226,36 @@
         @test all(r -> r.n_per_chain[1][1] == r.n_per_chain[1][2], observations)
         @test diagnostics(coherent).n_per_chain[1] == [200, 200]
         @test diagnostics(coherent).mean[1] ≈ [2.0, 2.0]
+
+        # Eight writers share chain 1 while readers take every kind of snapshot.
+        metrics = (:mean, :variance, :rhat_basic, :ess_mean, :autocor, :mc_cov)
+        shared = OnlineDiagnostics(Float64; nchains=2, parameter_shape=(2,), metrics, max_lag=3)
+        blocks = [[sin(7w + i) + w for i in 1:200, _ in 1:2] for w in 1:8]
+        snapshots = Channel{Any}(Inf)
+        writers = map(1:8) do w
+            Threads.@spawn for i in 1:2:200
+                append!(shared, blocks[w][i:i, :]; chain=1)
+                push!(shared, blocks[w][i + 1, :]; chain=1)
+            end
+        end
+        readers = map(1:2) do _
+            Threads.@spawn while !all(istaskdone, writers)
+                put!(snapshots, (diagnostics(shared), progress_summary(shared)))
+                mc_cov(shared)
+                yield()
+            end
+        end
+        foreach(wait, writers)
+        foreach(wait, readers)
+        close(snapshots)
+        @test all(snapshots) do (report, summary)
+            only(unique(report.n_draws)) == sum(report.n_per_chain[1]) <= summary.n_draws
+        end
+        expected = reduce(vcat, blocks)
+        report = diagnostics(shared)
+        @test report.n_per_chain[1] == [1600, 0]
+        @test [report.mean[p][1] for p in 1:2] ≈ vec(mean(expected; dims=1)) rtol=1e-14
+        @test [report.variance[p][1] for p in 1:2] ≈ vec(var(expected; dims=1)) rtol=1e-14
     end
 
     @testset "Centered and scaled moments" begin

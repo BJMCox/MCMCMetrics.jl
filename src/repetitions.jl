@@ -6,7 +6,16 @@ Base.showerror(io::IO, error::_WorkLimitError) = print(io, error.message)
 
 function _check_window(window, max_lag_work)
     isfinite(window) && window > 0 || throw(ArgumentError("window must be finite and positive"))
-    max_lag_work > 0 || throw(ArgumentError("max_lag_work must be positive"))
+    isnothing(max_lag_work) || max_lag_work > 0 || throw(ArgumentError("max_lag_work must be positive"))
+end
+
+# The default allows about as many lags as stored draws, so compressed input
+# works wherever the dense path does; huge repetition counts stay bounded.
+function _lag_budget(d, max_lag_work)
+    isnothing(max_lag_work) || return Int(max_lag_work)
+    stored = sum(c -> count(i -> _count(d, c, i) > 0, axes(d.chains[c], 1)), eachindex(d.chains))
+    work, overflow = Base.mul_with_overflow(2stored, stored)
+    overflow ? typemax(Int) : max(100_000_000, work)
 end
 
 function _check_fft_counts(d, autocov)
@@ -62,12 +71,15 @@ function _autocov_function(z, runs, autocov, max_lag_work)
         covariance = _fft_autocov(reshape(z, runs.n, length(runs.ranges)))
         return k -> covariance[k + 1]
     end
+    # Unit counts are dense draws: the dense kernel needs no cursor or budget.
+    m = length(runs.ranges)
+    length(z) == runs.n * m && return _dense_autocov(reshape(z, runs.n, m))
     work = Ref(0)
     return function (k)
         # Count a conservative two cursor advances per stored run and lag.
         cost = Base.Checked.checked_mul(2, length(z))
         cost <= max_lag_work - work[] || throw(_WorkLimitError(
-            "direct lag work exceeds max_lag_work; increase the explicit budget or use dense FFT"))
+            "direct lag work exceeds max_lag_work = $max_lag_work; increase it or use dense FFT"))
         work[] += cost
         _run_autocov(z, runs.weights, runs.ranges, runs.n, k)
     end
@@ -104,9 +116,8 @@ function _run_ess_result(runs; estimator=:geyer, autocov=:direct, window=5,
     max_lag_work=100_000_000, T=_floattype(eltype(runs.values)))
     n, m = runs.n, length(runs.ranges)
     n >= 4 || return (T(NaN), :insufficient_draws)
-    any(r -> all(i -> runs.values[i] == runs.values[first(r)], r), runs.ranges) &&
-        return (T(NaN), :constant)
     origin, scale = _sample_origin_scale(runs.values, T)
+    iszero(scale) && return (T(NaN), :constant)
     means, variances = Vector{T}(undef, m), Vector{T}(undef, m)
     z = Vector{T}(undef, length(runs.values))
     for (c, r) in enumerate(runs.ranges)
@@ -120,15 +131,7 @@ function _run_ess_result(runs; estimator=:geyer, autocov=:direct, window=5,
         variances[c] = _weighted_var(centered, weights)
         centered .-= center
     end
-    W = Statistics.mean(variances)
-    varplus = T(n - 1) / T(n) * W
-    m > 1 && (varplus += Statistics.var(means))
-    isfinite(varplus) && varplus > zero(T) || return (T(NaN), :estimator_failed)
-    covariance = _autocov_function(z, runs, autocov, max_lag_work)
-    rho = m == 1 ? k -> covariance(k) / varplus :
-        k -> one(T) - (W - covariance(k)) / varplus
-    tau = _window_tau(rho, n, T, estimator, window)
-    isfinite(tau) ? (T(n) * T(m) / tau, :ok) : (T(NaN), :estimator_failed)
+    _combined_ess(_autocov_function(z, runs, autocov, max_lag_work), means, variances, n, estimator, window)
 end
 
 function _run_order_statistic(values, weights, index, order=sortperm(values))
@@ -142,9 +145,7 @@ end
 
 function _run_indicator(runs, prob, ::Type{T}) where {T}
     total = foldl(Base.Checked.checked_add, runs.weights; init=0)
-    probability = Rational{BigInt}(prob)
-    rank = 1 + Int(fld((total - 1) * numerator(probability), denominator(probability)))
-    cutoff = _run_order_statistic(runs.values, runs.weights, rank)
+    cutoff = _run_order_statistic(runs.values, runs.weights, _cutoff_rank(total, prob))
     map(v -> T(v <= cutoff), runs.values)
 end
 

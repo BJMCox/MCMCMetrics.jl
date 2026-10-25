@@ -53,7 +53,7 @@ The default selection is the `:parameters` section. Component names such as
 `Symbol("beta[1]")` remain separate scalar keys. Chain boundaries stay intact.
 
 With short chains, a tail indicator can be constant in a split chain, yielding
-`NaN` tail ESS. Inspect `MCMCMetrics.diagnostics(mc)[:alpha].status` for the cause.
+`NaN` tail ESS. Inspect the `status` column of `MCMCMetrics.diagnostics(mc)` for the cause.
 
 ### InferenceObjects
 
@@ -63,15 +63,15 @@ Wrap retained draws in the `posterior` group, then request a diagnostic report:
 import InferenceObjects
 posterior = InferenceObjects.namedtuple_to_dataset((alpha=x,))
 data = InferenceObjects.InferenceData(; posterior)
-result = only(MCMCMetrics.diagnostics(data)[:alpha])
+result = only(MCMCMetrics.diagnostics(data))
 metrics = (; rhat=result.rhat, ess_bulk=result.ess_bulk,
     ess_tail=result.ess_tail, mcse_mean=result.mcse_mean)
 @assert all(isfinite, metrics) # hide
 metrics # hide
 ```
 
-The adapter returns a dictionary keyed by variable name. The scalar `alpha`
-has one report row. Vector or matrix variables have one row per component.
+The report has one row per scalar component and names its variable in the
+`parameter` column. The scalar `alpha` has one row.
 
 InferenceObjects requires separate `draw` and `chain` axes. A combined `sample`
 axis does not identify independent chains. `warmup_posterior` and `sample_stats`
@@ -79,11 +79,16 @@ are not included when passing an InferenceData object.
 
 ### Results and selection
 
-Every adapter returns a dictionary keyed by the original parameter key. Each
-value is the corresponding array method's result: scalar metrics for scalar
-parameters, or arrays with the parameter's component shape. `diagnostics` returns
-one StructArray per parameter, with component indices and per-metric statuses.
-Each variable retains its numeric precision, including in mixed Float32/Float64 inputs.
+Every adapter except `diagnostics` returns an `OrderedDict{K,Any}` from
+OrderedCollections, keyed by the original parameter key in the container's order.
+Each value is the corresponding array method's result: scalar metrics for scalar
+parameters, or arrays with the parameter's component shape. Each value retains
+its numeric precision, including in mixed Float32/Float64 inputs.
+
+`diagnostics` returns one StructArray in the same order, with a `parameter`
+column before the array report's columns. Its `index` column holds component
+indices within each parameter. Mixed precisions or shapes widen the shared
+columns.
 
 Result arrays use positional indices and preserve component and chain order.
 Coordinate labels stay in the source container. Use `parameters=(key1, key2)`

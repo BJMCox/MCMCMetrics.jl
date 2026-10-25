@@ -82,7 +82,10 @@ Return numeric records including `stationarity`, `precision`, `burnin`,
 `statistic`, `pvalue`, `mean`, `halfwidth`, `estimator` and `status`.
 Use at least 20 draws. The named spectral estimator replaces coda's AR fit;
 the truncation grid includes exactly 50%. These finite-sample conventions
-are explicit. Repeated checking does not yield a sequential error guarantee.
+are explicit. Only the untruncated test has size `alpha`. Stopping at the
+first acceptance, as coda's `heidel.diag` does, reports stationarity for
+about 99.7% of IID chains. Repeated checking does not yield a sequential
+error guarantee.
 Reference: Heidelberger and Welch (1983), doi:10.1287/opre.31.6.1109.
 """
 function heidelberger_welch(x; alpha=0.05, rtol=0.1, estimator=:geyer,

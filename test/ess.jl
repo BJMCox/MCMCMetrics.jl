@@ -38,10 +38,44 @@
     @test ess(distant; kind=:mean, split=false) ≈ Float32(exact_ess)
     @test mcse(distant; split=false) ≈ Float32(sqrt(BigFloat(exact_mcse2)))
 
-    subnormal = nextfloat(0.0)
-    constant_chain = hcat(fill(subnormal, 8), [0.,1,4,2,5,1,0,3] .* subnormal)
-    @test isnan(ess(constant_chain; kind=:mean, split=false))
-    @test isnan(mcse(constant_chain; split=false))
+    # One constant chain keeps the pooled variance; hand-derived IMS gives 32/3.
+    constant_chain = hcat(fill(1.0, 8), [0.,1,4,2,5,1,0,3])
+    @test ess(constant_chain; kind=:mean, split=false) ≈ 32 / 3
+    @test ess(constant_chain .* nextfloat(0.0); kind=:mean, split=false) ≈ 32 / 3
+    @test mcse(constant_chain; split=false) ≈ sqrt(var(vec(constant_chain)) / (32 / 3))
+end
+
+@testset "AR(1) chains against MCMCDiagnosticTools" begin
+    # Deterministic noise keeps the fixture independent of RNG streams.
+    x = zeros(1000, 4)
+    for c in 1:4, i in 1:1000
+        noise = mod(sin(12.9898i + 78.233c) * 43758.5453, 1) - 0.5
+        x[i, c] = (i > 1 ? 0.9x[i-1, c] : 0.0) + noise
+    end
+    # MCMCDiagnosticTools 0.3.19 on reshape(x, 1000, 4, 1); test/reference/compare.jl
+    # recomputes them. Its ESS adds a terminal even-lag correction to plain IMS.
+    @test rhat(x) ≈ 1.0119025262669858 rtol=1e-14
+    @test rhat(x; kind=:basic) ≈ 1.0117998061268647 rtol=1e-14
+    @test ess(x; kind=:tail) ≈ 412.3710623838115 rtol=1e-12
+    @test ess(x) ≈ 209.59255082527065 rtol=5e-4
+    @test mcse(x) ≈ 0.0454122307287818 rtol=5e-4
+    @test mcse(x; kind=:sd) ≈ 0.02262239504192394 rtol=5e-4
+end
+
+@testset "Slowly mixing chains" begin
+    # Late dense lags come from the transform; the compressed path sums them
+    # directly and, under the default budget, needs no explicit max_lag_work.
+    walk = cumsum(randn(Random.Xoshiro(1), 10_000, 4); dims=1)
+    counts, expanded = fill(2, size(walk)), repeat(walk; inner=(2, 1))
+    @test ess(walk; counts) ≈ ess(expanded) rtol=1e-12
+    @test ess(walk; kind=:mean, counts) ≈ ess(expanded; kind=:mean) rtol=1e-12
+    @test iact(walk; counts) ≈ iact(expanded) rtol=1e-12
+
+    # Direct lags alone take minutes here; the transform takes well under a second.
+    long = cumsum(randn(Random.Xoshiro(2), 200_000, 4); dims=1)
+    diagnostics(walk)
+    @test @elapsed(diagnostics(long)) < 10
+    @test @elapsed(mcse(long; kind=:sd)) < 10
 end
 
 @testset "Autocorrelation and per-chain IACT" begin

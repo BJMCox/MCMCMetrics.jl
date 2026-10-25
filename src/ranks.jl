@@ -1,23 +1,12 @@
 function _pooled_rankdata(d, p)
     entries = [(value=chain[i,p], count=_count(d,c,i), chain=c)
         for (c,chain) in enumerate(d.chains) for i in axes(chain,1) if _count(d,c,i) > 0]
-    order = sortperm(entries; by=e -> e.value)
+    values = [e.value for e in entries]
     total = foldl(Base.checked_add, d.lengths; init=0)
     ranks = Vector{Rational{widen(Int)}}(undef, length(entries))
-    before, i = 0, 1
-    while i <= length(order)
-        j, mass = i+1, entries[order[i]].count
-        while j <= length(order) && entries[order[j]].value == entries[order[i]].value
-            mass = Base.checked_add(mass, entries[order[j]].count)
-            j += 1
-        end
+    _foreach_tie(values, [e.count for e in entries], sortperm(values)) do group, before, mass
         # Widen before doubling; Base compares rationals with floats exactly.
-        rank = (2widen(before) + mass) // (2widen(total))
-        for k in i:j-1
-            ranks[order[k]] = rank
-        end
-        before += mass
-        i = j
+        ranks[group] .= (2widen(before) + mass) // (2widen(total))
     end
     entries, ranks
 end

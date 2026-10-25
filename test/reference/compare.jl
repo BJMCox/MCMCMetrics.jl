@@ -1,4 +1,5 @@
 using Test, Statistics
+import Random
 import MCMCMetrics, MCMCDiagnosticTools, PSIS, PosteriorStats
 
 # MCMCDiagnosticTools 0.3.19. Even lengths avoid its rank-before-split
@@ -17,6 +18,30 @@ import MCMCMetrics, MCMCDiagnosticTools, PSIS, PosteriorStats
         MCMCDiagnosticTools.ess(y; kind=:bulk, split_chains=1)
     @test MCMCMetrics.mcse(y; split=false) ≈
         MCMCDiagnosticTools.mcse(y; kind=mean, split_chains=1)
+end
+
+@testset "MCMCDiagnosticTools 0.3.19 on AR(1) and stuck chains" begin
+    # Deterministic noise keeps the fixture independent of RNG streams.
+    x = zeros(1000, 4)
+    for c in 1:4, i in 1:1000
+        noise = mod(sin(12.9898i + 78.233c) * 43758.5453, 1) - 0.5
+        x[i, c] = (i > 1 ? 0.9x[i-1, c] : 0.0) + noise
+    end
+    y = reshape(x, size(x)..., 1)
+    @test MCMCMetrics.rhat(x) ≈ only(MCMCDiagnosticTools.rhat(y)) rtol=1e-14
+    @test MCMCMetrics.rhat(x; kind=:basic) ≈ only(MCMCDiagnosticTools.rhat(y; kind=:basic)) rtol=1e-14
+    @test MCMCMetrics.ess(x; kind=:tail) ≈ only(MCMCDiagnosticTools.ess(y; kind=:tail)) rtol=1e-12
+    # MCMCDiagnosticTools adds a terminal even-lag correction to IMS.
+    @test MCMCMetrics.ess(x) ≈ only(MCMCDiagnosticTools.ess(y)) rtol=5e-4
+    @test MCMCMetrics.mcse(x) ≈ only(MCMCDiagnosticTools.mcse(y)) rtol=5e-4
+    @test MCMCMetrics.mcse(x; kind=:sd) ≈ only(MCMCDiagnosticTools.mcse(y; kind=std)) rtol=5e-4
+
+    stuck, half = copy(x), copy(x)
+    stuck[:, 3] .= 5.0
+    half[1:500, 1] .= 0.0
+    for z in (stuck, half)
+        @test MCMCMetrics.rhat(z) ≈ only(MCMCDiagnosticTools.rhat(reshape(z, size(z)..., 1))) rtol=1e-14
+    end
 end
 
 @testset "Remaining pinned Julia references" begin
@@ -41,6 +66,12 @@ end
     states = [0 1;0 1;0 1;1 0;1 0;1 0;0 1;0 1]
     comparison = MCMCMetrics.categorical_weiss(states)
     independent = MCMCDiagnosticTools.weiss(states)
+    @test [comparison.statistic,comparison.pvalue] ≈ [independent[1],independent[3]]
+    # IID draws whose phi estimate is negative noise, which the reference clips.
+    states = rand(Random.Xoshiro(3),1:3,1000,4)
+    comparison = MCMCMetrics.categorical_weiss(states)
+    independent = MCMCDiagnosticTools.weiss(states)
+    @test comparison.phi == 0
     @test [comparison.statistic,comparison.pvalue] ≈ [independent[1],independent[3]]
 
     ratios = log.(collect(1.:200))

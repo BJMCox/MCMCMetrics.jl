@@ -9,15 +9,16 @@ The caller owns warmup selection, chain identity, sampling design and stopping r
 self-consistent window. Geyer's shape argument requires reversibility. Sokal's
 window is a different estimator, with an explicit `window` setting.
 
-`mcse(x; estimand=...)` supports the mean, variance, standard deviation,
+`mcse(x; kind=...)` supports the mean, variance, standard deviation,
 quantile and median. Variance/SD use the centered-square influence process.
 Quantile uncertainty uses indicator ESS, Beta probability bounds and type-7
 empirical inversion. A tied interval that collapses returns unavailable precision.
 These quantile methods assume regular continuous quantiles.
 
 Mean MCSE supports nonoverlapping and overlapping batch means. Independent
-chain mean variances combine using retained draw counts. A nonpositive LRV
-is unavailable, including an alternating process with identical batch means.
+chain mean variances combine using retained draw counts. A constant chain
+contributes zero variance. The MCSE is unavailable only when every chain has
+zero LRV, for example identical draws or an alternating process with identical batch means.
 No fallback substitutes nominal sample size or clamps ESS to the draw count.
 
 `diagnostic_curve(x; prefixes, diagnostic=ess)` evaluates caller-chosen logical
@@ -57,9 +58,11 @@ Assigning group IDs cannot create that design. One-draw subchains require
 
 `categorical_summary` reports integer-state occupations and transitions,
 including caller-supplied unvisited levels. `categorical_weiss` compares state
-frequencies under a shared DAR(1) dependence model. It returns unavailable when
-the fitted dependence lies outside that model. Sparse states weaken the
-chi-square approximation. General categorical Markov chains need not be DAR(1).
+frequencies under a shared DAR(1) dependence model. A small negative dependence
+estimate is noise at the model boundary and is clipped to zero. The test returns
+unavailable when the estimate is more than four standard errors negative.
+Sparse states weaken the chi-square approximation. General categorical Markov
+chains need not be DAR(1).
 
 ## Sampler metadata and movement
 

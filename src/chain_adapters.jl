@@ -8,12 +8,18 @@ const _PARAMETER_DIAGNOSTICS = (
 function _parameterwise(getdraws, f, parameters; kwargs...)
     any(k -> haskey(kwargs, k), (:drawdim, :chaindim)) &&
         throw(ArgumentError("chain containers determine their draw and chain dimensions"))
-    # Values can have different scalar types and shapes. Inferring a shared
-    # dictionary value type would promote Float32 results to Float64.
-    Dict{eltype(parameters),Any}(
+    keys = collect(parameters)
+    allunique(keys) || throw(ArgumentError("parameters must be distinct"))
+    # Values keep their own scalar types; a shared type would promote Float32.
+    results = OrderedDict{eltype(keys),Any}(
         key => f(_observed_array(getdraws(key)); drawdim=1, chaindim=2, kwargs...)
-        for key in parameters)
+        for key in keys)
+    _parameter_results(f, results)
 end
+
+_parameter_results(f, results) = results
+_parameter_results(::typeof(diagnostics), results) =
+    StructArray(merge((parameter=key,), row) for (key, table) in results for row in table)
 
 function _observed_array(x)
     T = Base.nonmissingtype(eltype(x))

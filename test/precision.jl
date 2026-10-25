@@ -9,8 +9,8 @@
     end
     @test autocor(x; counts, lags=[0, 1, 5, 12, 16]) ≈ autocor(dense; lags=[0, 1, 5, 12, 16])
     @test iact(x; counts) ≈ iact(dense)
-    for estimand in (:mean, :variance, :sd, :quantile, :median)
-        @test isapprox(mcse(x; counts, estimand), mcse(dense; estimand); nans=true, rtol=5f-6)
+    for kind in (:mean, :variance, :sd, :quantile, :median)
+        @test isapprox(mcse(x; counts, kind), mcse(dense; kind); nans=true, rtol=5f-6)
     end
     # A handful of runs can represent enormous logical lengths. A short lag
     # query still works, while a long Geyer window must respect its work budget.
@@ -39,9 +39,16 @@ end
 
 @testset "Batch degeneracy and native run arithmetic" begin
     alternating = [0., 1, 0, 1]
+    x = [sin(0.9i + 2c) + 0.5cos(2.3i * c) for i in 1:200, c in 1:4]
+    stuck = copy(x)
+    stuck[:, 3] .= 5.0
     for estimator in (:batchmeans, :overlapping)
         @test isnan(mcse(alternating; estimator, batch_size=2))
-        @test isnan(mcse(hcat(alternating, [1., 2, 4, 8]); estimator, batch_size=2))
+        @test isnan(mcse(fill(2.0, 8, 2); estimator, batch_size=2))
+        # A chain with zero long-run variance contributes nothing, as in R-hat and ESS.
+        @test mcse(hcat(alternating, [1., 2, 4, 8]); estimator, batch_size=2) ≈
+            mcse([1., 2, 4, 8]; estimator, batch_size=2) / 2
+        @test mcse(stuck; estimator) ≈ 3 / 4 * mcse(stuck[:, [1, 2, 4]]; estimator)
     end
     # The discarded singleton must not influence either centering or scaling.
     for T in (Float32, Float64)
@@ -82,19 +89,20 @@ end
     tail = SpecialFunctions.erfc(inv(sqrt(2))) / 2
     bounds = probability_bound.([tail, 1 - tail])
     expected = (quantile(x, bounds[2]) - quantile(x, bounds[1])) / 2
-    @test mcse(x; estimand=:quantile, split=false) ≈ expected
-    @test mcse(x; estimand=:median, split=false) ≈ expected
+    @test mcse(x; kind=:quantile, split=false) ≈ expected
+    @test mcse(x; kind=:median, split=false) ≈ expected
     tied = repeat([0., 0, 0, 1]; outer=40)
-    @test isnan(mcse(tied; estimand=:quantile, prob=0.2, split=false))
+    @test isnan(mcse(tied; kind=:quantile, prob=0.2, split=false))
     # Independent exact-rational covariance and IMS calculations on squared
     # centered draws provide these non-Gaussian influence references.
-    @test mcse(x; estimand=:variance, split=false)^2 ≈ 253 / 1944
-    @test mcse(x; estimand=:sd, split=false)^2 ≈ 23 / 2160
+    @test mcse(x; kind=:variance, split=false)^2 ≈ 253 / 1944
+    @test mcse(x; kind=:sd, split=false)^2 ≈ 23 / 2160
+    @test (@test_deprecated mcse(x; estimand=:sd, split=false)) == mcse(x; kind=:sd, split=false)
     scale = ldexp(1f0, 50)
-    @test mcse(Float32.(x) .* scale; estimand=:variance, split=false) / scale / scale ≈
-        Float32(mcse(x; estimand=:variance, split=false))
-    @test mcse(Float32.(x) .* scale; estimand=:sd, split=false) / scale ≈
-        Float32(mcse(x; estimand=:sd, split=false))
+    @test mcse(Float32.(x) .* scale; kind=:variance, split=false) / scale / scale ≈
+        Float32(mcse(x; kind=:variance, split=false))
+    @test mcse(Float32.(x) .* scale; kind=:sd, split=false) / scale ≈
+        Float32(mcse(x; kind=:sd, split=false))
 end
 
 @testset "Sokal and diagnostic curves" begin

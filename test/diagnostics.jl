@@ -5,8 +5,12 @@
     @test result.rhat ≈ rhat(x)
     @test result.ess_bulk ≈ ess(x)
     @test result.mcse_mean ≈ mcse(x)
-    @test result.status == (rhat=:ok, ess_bulk=:ok, ess_tail=:constant, mcse_mean=:ok)
+    @test result.status == (rhat=:ok, ess_bulk=:ok, ess_tail=:constant, mcse_mean=:ok, mcse_sd=:ok)
     @test isnan(result.ess_tail) && result.mcse_mean isa Float32
+    # posterior's summarise_draws: pooled mean, sd (N-1) and type-7 quantiles.
+    @test result.mean ≈ mean(x) && result.sd ≈ std(vec(x))
+    @test [result.q5, result.q95] ≈ quantile(vec(x), [0.05, 0.95])
+    @test result.mcse_sd ≈ mcse(x; kind=:sd)
 
     single = only(diagnostics(view(x, :, 1)))
     @test isnan(single.rhat) && single.status.rhat === :insufficient_chains
@@ -28,6 +32,28 @@
     @test iact(ragged) ≈ reshape([iact(x[:, 1]), iact(x[1:8, 2])], 2, 1)
 end
 
+@testset "Parameter tasks match separate calls" begin
+    x = [sin(0.9i + 2c + k) + 0.5cos(2.3i * c * k) for i in 1:60, c in 1:4, k in 1:16]
+    separate(f) = [f(x[:, :, k]) for k in axes(x, 3)]
+    result = diagnostics(x)
+    @test result.rhat == rhat(x) == separate(rhat)
+    @test result.ess_bulk == ess(x) == separate(ess)
+    @test result.mcse_mean == mcse(x) == separate(mcse)
+    @test iact(x) == reduce(hcat, separate(iact))
+end
+
+@testset "A non-finite parameter keeps the other rows" begin
+    z = [sin(0.9i + 2c + k) + 0.5cos(2.3i * c * k) for i in 1:40, c in 1:4, k in 1:3]
+    z[5, 2, 3] = Inf
+    result, clean = diagnostics(z), diagnostics(z[:, :, 1:2])
+    @test result[1:2] == clean
+    @test all(==(:nonfinite), result.status[3])
+    @test all(isnan, (result.rhat[3], result.ess_bulk[3], result.ess_tail[3], result.mcse_mean[3]))
+    @test isequal(rhat(z), [rhat(z[:, :, 1:2]); NaN])
+    @test isequal(ess(z), [ess(z[:, :, 1:2]); NaN])
+    @test isequal(mcse(z), [mcse(z[:, :, 1:2]); NaN])
+end
+
 @testset "Compressed aggregate keeps available metrics" begin
     runs = [0. 3; 1 0; 4 1; 2 4; 5 2; 1 5]
     counts = fill(3, size(runs))
@@ -37,6 +63,9 @@ end
     @test result.n_draws == length(expanded) && result.status.rhat === :ok
     @test result.ess_bulk ≈ ess(expanded)
     @test result.mcse_mean ≈ mcse(expanded)
+    dense = only(diagnostics(expanded))
+    @test [result.mean, result.sd, result.q5, result.q95, result.mcse_sd] ≈
+        [dense.mean, dense.sd, dense.q5, dense.q95, dense.mcse_sd]
     limited = only(diagnostics(runs;counts,max_lag_work=1))
     @test limited.rhat ≈ result.rhat && limited.status.ess_bulk === :work_limit && limited.status.mcse_mean === :work_limit
 end
