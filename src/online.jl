@@ -436,7 +436,14 @@ function diagnostics(state::OnlineDiagnostics{T,Metrics}) where {T,Metrics}
          status=isempty(selected) ? fill((;), np) : StructArray(statuses))))
 end
 
-function rhat(state::OnlineDiagnostics{T,Metrics}; kind=:rank, split=true) where {T,Metrics}
+"""
+    rhat(state::OnlineDiagnostics; kind=:basic, split=false)
+
+Read unsplit basic R-hat for each parameter. The batch default `kind=:rank,
+split=true` is unavailable online: ranks need every draw, and the split point
+moves with each draw.
+"""
+function rhat(state::OnlineDiagnostics{T,Metrics}; kind=:basic, split=false) where {T,Metrics}
     kind === :basic && split === false ||
         throw(ArgumentError("online states support only kind=:basic with split=false"))
     :rhat_basic in Metrics || throw(ArgumentError("state does not track rhat_basic"))

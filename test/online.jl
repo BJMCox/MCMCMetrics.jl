@@ -15,7 +15,7 @@
             @test report.n_draws == [8, 8]
             @test report.n_per_chain[1] == [4, 4]
             @test all(s -> s.rhat_basic === :ok, report.status)
-            @test rhat(state; kind=:basic, split=false) == report.rhat_basic
+            @test rhat(state) == report.rhat_basic
         end
     end
 
