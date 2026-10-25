@@ -207,4 +207,20 @@ end
     empty!(state); append!(state,x;chain=1,counts=[2^40,2^40,2^40,2^40,2^40])
     @test only(mc_cov(state).precision).n_draws == 5*2^40
     @test all(isfinite,only(mc_cov(state).mean_cov))
+
+    # Hierarchical levels receive mixed batches from below after each run.
+    state = OnlineDiagnostics(Float64;nchains=1,parameter_shape=(3,),metrics=(:mc_cov,:ess_multivariate))
+    values = [sin(3.7i+p)+i/(50p) for i in 1:300,p in 1:3]
+    for cycle in 1:2
+        empty!(state)
+        counts = [(1,1,2,5,37)[mod1(7i+cycle,5)] for i in 1:300]
+        for i in axes(values,1)
+            push!(state,values[i,:];chain=1,count=counts[i])
+            i % 30 == 0 || continue
+            expanded = reduce(vcat,[repeat(values[k:k,:],counts[k],1) for k in 1:i])
+            oracle = auxiliary_vector_oracle(expanded)
+            @test only(mc_cov(state).mean_cov) ≈ oracle.mean_cov rtol=1e-12
+            @test only(ess_multivariate(state).ess_multivariate) ≈ oracle.ess rtol=1e-12
+        end
+    end
 end

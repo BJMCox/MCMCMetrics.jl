@@ -18,7 +18,9 @@ function _online_covariance(::Type{T}, moments) where {T}
     marginal = [_online_cross_moments(StructArray(map(a -> view(a,:,c:c),StructArrays.components(moments)))) for c in 1:nc]
     level = _OnlineBatchLevel(_online_cross_moments(_online_moments(T,(np,1))),
         _online_moments(T,(np,1);second=false))
-    (marginal=marginal,levels=[typeof(level)[] for _ in 1:nc])
+    # A head carries one completed mixed batch from a level to the next.
+    (marginal=marginal,levels=[typeof(level)[] for _ in 1:nc],
+        heads=[_online_moments(T,(np,1);second=false) for _ in 1:nc])
 end
 
 _online_vector_component(draw,p) = (draw[p],zero(draw[p]),zero(draw[p]))
@@ -61,46 +63,77 @@ function _online_vector_add!(target, source, count)
     end
 end
 
+function _online_partial_add!(partial, x, count)
+    for p in axes(partial,1)
+        _online_add!(partial,p,1,x[p],count)
+    end
+end
+
+function _online_vector_complete!(level, head)
+    _online_vector_add!(level.completed,level.partial,1)
+    for name in (:n,:origin,:scale,:mean)
+        copyto!(getproperty(head,name),getproperty(level.partial,name))
+    end
+    fill!(level.partial.n,0)
+end
+
+# Vector form of _online_climb!: the head is a mixed lower batch, then `run`
+# lower batches of x follow. Return the run for the next level.
+function _online_vector_climb!(level, head, x, run, half)
+    partial = level.partial
+    if head.n[1,1] > 0
+        pending = partial.n[1,1] > 0
+        for p in axes(partial,1)
+            _online_add!(partial,p,1,head.origin[p,1],head.n[p,1],head.scale[p,1],head.mean[p,1])
+        end
+        fill!(head.n,0)
+        pending && _online_vector_complete!(level,head)
+    end
+    if run > 0 && partial.n[1,1] > 0
+        _online_partial_add!(partial,x,half)
+        _online_vector_complete!(level,head)
+        run -= 1
+    end
+    full, rest = divrem(run,2)
+    _online_vector_add!(level.completed,x,full)
+    _online_partial_add!(partial,x,rest*half)
+    full
+end
+
+# Vector form of _online_start!: a new width starts from the chain prefix.
+function _online_vector_start!(level, moments, x, endpoint, width)
+    partial = level.partial
+    n = moments.n[1,1]
+    for name in (:n,:origin,:scale,:mean)
+        copyto!(getproperty(partial,name),getproperty(moments,name))
+    end
+    _online_partial_add!(partial,x,width-n)
+    _online_vector_add!(level.completed,partial,1)
+    fill!(partial.n,0)
+    full, rest = divrem(endpoint-width,width)
+    _online_vector_add!(level.completed,x,full)
+    _online_partial_add!(partial,x,rest-rest%(width>>1))
+end
+
+# Level j holds width 2^j and receives only completed batches of the level
+# below, as in _online_batches!. Width 1 batches are the marginal draws.
 function _online_covariance!(b, draw, c, n, count)
-    marginal = b.marginal[c]
+    marginal, levels, head = b.marginal[c], b.levels[c], b.heads[c]
     moments = marginal.moments
     T, np = eltype(moments.origin), size(moments,1)
     endpoint = n+count
-    needed = 8sizeof(Int)-leading_zeros(endpoint)
-    while length(b.levels[c]) < needed
-        push!(b.levels[c],_OnlineBatchLevel(_online_cross_moments(_online_moments(T,(np,1))),
+    while length(levels) < _online_level_count(endpoint)
+        push!(levels,_OnlineBatchLevel(_online_cross_moments(_online_moments(T,(np,1))),
             _online_moments(T,(np,1);second=false)))
     end
-    for (j,level) in enumerate(b.levels[c])
-        width = 1 << (j-1)
-        width > endpoint && break
-        left = count
-        partial = level.partial
-        if n < width
-            for p in 1:np
-                partial.n[p,1] = moments.n[p,1]
-                partial.origin[p,1] = moments.origin[p,1]
-                partial.scale[p,1] = moments.scale[p,1]
-                partial.mean[p,1] = moments.mean[p,1]
-            end
-        end
-        oldpartial = partial.n[1,1]
-        if oldpartial > 0
-            take = min(left,width-oldpartial)
-            for p in 1:np
-                _online_add!(partial,p,1,draw[p],take)
-            end
-            left -= take
-            if oldpartial+take == width
-                _online_vector_add!(level.completed,partial,1)
-                fill!(partial.n,0)
-            end
-        end
-        full, remainder = divrem(left,width)
-        _online_vector_add!(level.completed,draw,full)
-        for p in 1:np
-            _online_add!(partial,p,1,draw[p],remainder)
-        end
+    fill!(head.n,0)
+    run = count
+    for j in 1:_online_level_count(n)
+        run = _online_vector_climb!(levels[j],head,draw,run,1 << (j-1))
+        head.n[1,1] == 0 && run == 0 && break
+    end
+    for j in _online_level_count(n)+1:_online_level_count(endpoint)
+        _online_vector_start!(levels[j],moments,draw,endpoint,1 << j)
     end
     # The draw-major caller updates these shared scalar moments immediately after.
     _online_cross_add!(marginal,draw,count)
@@ -145,7 +178,8 @@ function _online_vector_precision(b,c,n,::Type{T}; metric=:mc_cov) where {T}
     a = info.completed_batches
     a < 2 && return unavailable(:insufficient_batches)
     marginal = b.marginal[c]
-    completed = b.levels[c][trailing_zeros(info.batch_width)+1].completed
+    width = info.batch_width
+    completed = width == 1 ? marginal : b.levels[c][trailing_zeros(width)].completed
     drawcov = _online_cross_covariance(marginal,n)
     batchcov = _online_cross_covariance(completed,a)
     drawdet, batchdet = _online_cov_logdet(drawcov), _online_cov_logdet(batchcov)
