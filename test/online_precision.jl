@@ -83,6 +83,20 @@ end
         @test only(mcse(compressed)) ≈ Float32(expected.mcse) rtol=64eps(Float32)
         @test mcse(compressed) ≈ mcse(chunks) ≈ mcse(split)
         @test ess(compressed) ≈ ess(chunks) ≈ ess(split)
+
+        # Hierarchical levels receive mixed batches from below after each run.
+        runs = OnlineDiagnostics(Float64; nchains=1, metrics)
+        for cycle in 1:2
+            empty!(runs)
+            values = [sin(3.7i) + i / 50 for i in 1:300]
+            counts = [(1, 1, 2, 5, 37)[mod1(7i + cycle, 5)] for i in 1:300]
+            for i in eachindex(values)
+                push!(runs, values[i]; chain=1, count=counts[i])
+                i % 30 == 0 || continue
+                expected = online_precision_oracle(values[1:i], counts[1:i])
+                @test only(mcse(runs)) ≈ expected.mcse rtol=64eps()
+            end
+        end
     end
 
     @testset "Native precision, large offsets and counts" begin
@@ -169,6 +183,14 @@ end
         push!(huge,0f0;chain=1,count=2^26)
         push!(huge,1f0;chain=1,count=2^26)
         @test autocor(huge)[:,1] ≈ Float32[1,1-3/2^27,1-6/2^27]
+
+        # Re-centering follows an initial outlier, a drifting mean and tiny units.
+        noise = Float32[sin(0.7f0i) + mod(5i, 7) / 7 for i in 1:3000]
+        for x in (vcat(1f4, noise[2:end] .+ (2:3000) ./ 100f0), 1f-30 .* noise)
+            moving = OnlineDiagnostics(Float32;nchains=1,metrics=(:autocor,),max_lag=4)
+            append!(moving,x;chain=1)
+            @test autocor(moving)[:,1] ≈ Float32.(online_lag_oracle(x,4)) atol=4eps(Float32)
+        end
     end
 
     @testset "Ordered-state lifecycle and coherent snapshots" begin

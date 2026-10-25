@@ -68,7 +68,7 @@ using LinearAlgebra
     @test sampler_diagnostics(state) == previous
 end
 
-@testset "Online auxiliary independent concurrent chains" begin
+online_threaded("Online auxiliary independent concurrent chains") do
     state = OnlineDiagnostics(Float64;nchains=16,parameter_shape=(2,),metrics=(:bfmi,:jump_distance,:waic),observation_shape=(2,))
     Threads.@threads for c in 1:16
         for i in 1:33

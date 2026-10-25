@@ -1,51 +1,28 @@
 """
     OnlineDiagnostics(T; nchains, parameter_shape=(), metrics=(:mean, :variance, :rhat_basic),
                       threshold=nothing, max_lag=nothing, max_tree_depth=nothing,
-                      observation_shape=nothing, metric=nothing)
+                      observation_shape=nothing, metric=nothing, names=nothing)
 
-Accumulate independent chains in `Float32` or `Float64`, without retaining draws.
-Observations must have the state's floating type. The selected metrics share
-anchored, scaled centered moments, using O(parameters × chains) storage.
+Accumulate independent chains in `Float32` or `Float64` without retaining draws.
+Real observations convert to `T`, as in a `Vector{T}`; values that overflow `T`
+are rejected as nonfinite. Choose `metrics` at construction. The
+[Online diagnostics](@ref) guide lists each metric, its keywords, storage and
+assumptions. Optional distinct `names`, one per parameter in linear order, add a
+`name` column to `diagnostics`.
 
-Select `:mcse_mean`, `:ess_mean`, or `:iact_mean` for per-chain raw-mean
-precision from dyadic nonoverlapping batch means, using
-O(parameters × chains × log(n)) storage. At n draws, use width
-`2^floor(floor(log2(n))/2)` and sample variance of the complete batch means.
-The mean, marginal variance and MCSE denominator use all n observations.
-Zero estimated long-run variance gives unavailable precision; ESS is not capped.
-Consistency requires appropriate mixing and moment conditions; for example a
-strong Brownian approximation with uniform partial-sum error `o(n^(1/4))`,
-together with ergodic first/second moments and positive long-run variance.
+`push!` takes one parameter-shaped draw and an explicit `chain`. `append!` takes
+batch array axes and integer repetition `counts`. With `chain`, its layout is
+draws × parameter dimensions. Without `chain`, the input holds every chain.
+Malformed chunks are rejected before any draw is consumed.
 
-`:indicator` applies that estimator to `I(x <= threshold)`. Supply a finite
-scalar or parameter-shaped `threshold`, copied and converted to T at construction.
-`:autocor` requires explicit `max_lag >= 0` and retains a bounded ring plus
-paired moments in O(parameters × chains × max_lag) storage. Compressed runs
-advance precision in O(parameters × log(n)) work and lags with at most max_lag
-boundary draws, independent of the logical repetition count. Time-dependent
-configurations do not support `merge!`.
-
-Auxiliary choices are `:bfmi`, `:divergence`, `:acceptance`, `:tree_depth`,
-`:leapfrog_steps`, `:importance`, `:waic`, `:jump_distance`, `:mc_cov`, and
-`:ess_multivariate`. These use separate family snapshots, without repeating
-whole-chain results in parameter rows. Tree depth requires `max_tree_depth`;
-WAIC requires fixed `observation_shape`. Jump distance optionally takes a copied
-SPD `metric` matrix in T. Full vector precision explicitly costs
-O(parameters² × chains × log(n)); all other auxiliary storage is fixed in n.
-All auxiliary configurations reject `merge!`.
-
-`push!` accepts one parameter-shaped draw and an explicit `chain`.
-`append!` accepts batch array axes and integer repetition `counts`. With `chain`,
-its default layout is draws × parameter dimensions. Without `chain`, its input
-must contain every chain. Reject malformed chunks before consuming any draw.
-
-One lock protects each chain. Chunk updates lock once, and snapshots lock all
-chains in ascending order. Callers must preserve each chain's chronological order
-and keep input arrays unchanged during a call. `empty!` requires producers from
-the previous sampling cycle to finish first.
+One lock protects each chain. Callers preserve each chain's draw order, keep
+inputs unchanged during a call, and finish producers before `empty!`. Ordered
+and auxiliary metrics reject `merge!`. For a live display, `progress_summary`
+reads `(n_draws, max_rhat, min_ess)` without copying the state.
 """
-struct OnlineDiagnostics{T,Metrics,N,S,B}
+struct OnlineDiagnostics{T,Metrics,N,S,B,K}
     shape::NTuple{N,Int}
+    names::K
     moments::S
     blocks::B
     locks::Vector{ReentrantLock}
@@ -53,7 +30,7 @@ end
 
 function OnlineDiagnostics(::Type{T}; nchains::Integer, parameter_shape::Tuple=(),
     metrics::Tuple=(:mean, :variance, :rhat_basic), threshold=nothing, max_lag=nothing,
-    max_tree_depth=nothing, observation_shape=nothing, metric=nothing) where {T}
+    max_tree_depth=nothing, observation_shape=nothing, metric=nothing, names=nothing) where {T}
     T in (Float32, Float64) || throw(ArgumentError("online states support Float32 and Float64"))
     nchains > 0 || throw(ArgumentError("nchains must be positive"))
     all(d -> d isa Integer && d > 0, parameter_shape) ||
@@ -85,10 +62,15 @@ function OnlineDiagnostics(::Type{T}; nchains::Integer, parameter_shape::Tuple=(
         max_lag === nothing || throw(ArgumentError("max_lag requires the autocor metric"))
         nothing
     end
+    if names !== nothing
+        names = vec(collect(names))
+        length(names) == nparameters && allunique(names) ||
+            throw(ArgumentError("names must hold one distinct name per parameter"))
+    end
     auxiliary = _online_auxiliary(T, metrics, moments; max_tree_depth, observation_shape, metric)
     blocks = merge((precision=levels, indicator=indicator, lags=lags), auxiliary)
-    return OnlineDiagnostics{T,metrics,length(shape),typeof(moments),typeof(blocks)}(
-        shape, moments, blocks, [ReentrantLock() for _ in 1:nchains])
+    return OnlineDiagnostics{T,metrics,length(shape),typeof(moments),typeof(blocks),typeof(names)}(
+        shape, names, moments, blocks, [ReentrantLock() for _ in 1:nchains])
 end
 
 include("online/batches.jl")
@@ -107,7 +89,7 @@ include("online/covariance.jl")
     if blocks.indicator !== nothing
         _online_prepare!(blocks.indicator.levels, T, np, c, n + count)
     end
-    blocks.lags === nothing || _online_lags!(blocks.lags, draw, c, n, count)
+    blocks.lags === nothing || _online_lags!(blocks.lags, state.moments, draw, c, n, count)
     for (p, x) in enumerate(draw)
         blocks.precision === nothing || _online_batches!(blocks.precision, state.moments, p, c, x, count)
         if blocks.indicator !== nothing
@@ -146,6 +128,10 @@ function _online_count(count)
         throw(ArgumentError("counts must be nonnegative integers representable by Int"))
     return Int(count)
 end
+
+# Copy only inputs of another element type.
+_online_convert(::Type{T}, x::AbstractArray{<:Real}) where {T} = eltype(x) === T ? x : T.(x)
+_online_convert(::Type{T}, x::AbstractVector{<:AbstractMatrix}) where {T} = [_online_convert(T, c) for c in x]
 
 # Keep offsets small before division. Opposite extreme values need scaled subtraction.
 function _online_scale(origin, x, scale)
@@ -214,8 +200,9 @@ end
 """
     push!(state::OnlineDiagnostics, draw; chain, count=1, metadata=(;))
 
-Consume one draw, repeated `count` times. A scalar state accepts a scalar draw.
-Parameter states accept arrays with exactly `parameter_shape`. Zero counts ignore
+Consume one draw, repeated `count` times. A scalar state accepts a real scalar.
+Parameter states accept real arrays with exactly `parameter_shape`. Values convert
+to the state's type; a value that overflows it is nonfinite. Zero counts ignore
 nonfinite values. Invalid input and count overflow leave the call unconsumed.
 
 Configured auxiliary metrics require `metadata` fields `energy`, `divergent`,
@@ -230,18 +217,19 @@ function Base.push!(state::OnlineDiagnostics{T}, draw; chain, count=1, metadata=
     c = _online_chain(state, chain)
     k = _online_count(count)
     if isempty(state.shape)
-        draw isa T || throw(ArgumentError("draw must have the state's floating type"))
+        draw isa Real || throw(ArgumentError("draw must be real"))
     else
-        draw isa AbstractArray{T} || throw(ArgumentError("draw must have the state's floating type"))
+        draw isa AbstractArray{<:Real} || throw(ArgumentError("draw must be a real array"))
         size(draw) == state.shape || throw(DimensionMismatch("draw has the wrong parameter shape"))
     end
+    values = isempty(state.shape) ? T(draw) : _online_convert(T, draw)
     _online_metadata_validate(state, metadata, k)
     k == 0 && return state
-    all(isfinite, draw) || throw(ArgumentError("positive-count draws must be finite"))
+    all(isfinite, values) || throw(ArgumentError("positive-count draws must be finite"))
     _online_locked(state, (c,)) do
         Base.checked_add(state.moments.n[1, c], k)
         _online_work_check(state.blocks.work, metadata, c, k)
-        _online_update!(state, draw, c, k, metadata)
+        _online_update!(state, values, c, k, metadata)
     end
     return state
 end
@@ -250,7 +238,8 @@ end
     append!(state::OnlineDiagnostics, draws; chain=nothing, drawdim=1, chaindim,
             counts=nothing, metadata=(;))
 
-Consume a complete chunk. With `chain`, `chaindim` defaults to `nothing`.
+Consume a complete chunk of real values, converted as in `push!`. With `chain`,
+`chaindim` defaults to `nothing`.
 Without `chain`, the batch defaults apply and every state chain must be present.
 Validate the whole input and all count additions before updating any chain.
 
@@ -262,10 +251,10 @@ configured metadata; zero-count rows may contain nonfinite placeholders.
 """
 function Base.append!(state::OnlineDiagnostics{T}, x; chain=nothing, drawdim=1,
     chaindim=chain === nothing ? _default_chaindim(x) : nothing, counts=nothing, metadata=(;)) where {T}
-    draws = _draws(x; drawdim, chaindim, counts)
+    x isa AbstractArray{<:Real} || x isa AbstractVector{<:AbstractMatrix{<:Real}} ||
+        throw(ArgumentError("draws must be real"))
+    draws = _draws(_online_convert(T, x); drawdim, chaindim, counts)
     draws.shape == state.shape || throw(DimensionMismatch("chunk has the wrong parameter shape"))
-    all(x -> eltype(x) === T, draws.chains) ||
-        throw(ArgumentError("draws must have the state's floating type"))
     chains = chain === nothing ? eachindex(state.locks) : (_online_chain(state, chain),)
     length(draws.chains) == length(chains) ||
         throw(DimensionMismatch("chunk must contain every addressed chain"))
@@ -330,6 +319,7 @@ function Base.merge!(destination::OnlineDiagnostics{T,M}, source::OnlineDiagnost
         throw(ArgumentError("merge! requires moment-only configurations"))
     destination === source && throw(ArgumentError("cannot merge a state with itself"))
     T === U && M === K && destination.shape == source.shape &&
+        isequal(destination.names, source.names) &&
         length(destination.locks) == length(source.locks) ||
         throw(ArgumentError("online state configurations must match"))
     snapshot = _online_snapshot(source)
@@ -347,24 +337,27 @@ function Base.merge!(destination::OnlineDiagnostics{T,M}, source::OnlineDiagnost
     return destination
 end
 
-function _online_rhat(snapshot, p, ::Type{T}) where {T}
+# `unequal` accepts different chain lengths, with each chain's own variance divisor
+# and the shortest length in the (n-1)/n term.
+function _online_rhat(snapshot, p, ::Type{T}, means=Vector{T}(undef, size(snapshot.n, 2)),
+    variances=similar(means); unequal=false) where {T}
     counts = @view snapshot.n[p, :]
     length(counts) < 2 && return (T(NaN), :insufficient_chains)
-    all(==(first(counts)), counts) || return (T(NaN), :unequal_chain_lengths)
-    n = first(counts)
+    unequal || all(==(first(counts)), counts) || return (T(NaN), :unequal_chain_lengths)
+    n = minimum(counts)
     n < 2 && return (T(NaN), :insufficient_draws)
-    any(iszero, @view(snapshot.m2[p, :])) && return (T(NaN), :constant)
     origin = snapshot.origin[p, 1]
+    # A stuck chain is evidence of nonconvergence. Only a constant pool is undefined.
+    all(c -> iszero(snapshot.m2[p, c]) && snapshot.origin[p, c] == origin, eachindex(counts)) &&
+        return (T(NaN), :constant)
     scale = maximum(@view snapshot.scale[p, :])
     for c in eachindex(counts)
         scale = _online_scale(origin, snapshot.origin[p, c], scale)
     end
-    means = Vector{T}(undef, length(counts))
-    variances = similar(means)
     for c in eachindex(counts)
         factor = snapshot.scale[p, c] / scale
         means[c] = _online_center(snapshot.origin[p, c], origin, scale) + factor * snapshot.mean[p, c]
-        variances[c] = factor * (factor * (snapshot.m2[p, c] + snapshot.m2_error[p, c])) / T(n - 1)
+        variances[c] = factor * (factor * (snapshot.m2[p, c] + snapshot.m2_error[p, c])) / T(counts[c] - 1)
     end
     result = _rhat_from_moments(means, variances, n)
     return (result, isnan(result) ? :estimator_failed : :ok)
@@ -376,7 +369,8 @@ end
 Return an owned `StructArray` snapshot with one row per scalar parameter.
 Selected `mean` and `variance` fields hold per-chain vectors. `rhat_basic` is the
 unsplit classical R-hat. `status` has the selected metric names, with per-chain
-statuses for moments and one status for R-hat. `index` identifies the parameter.
+statuses for moments and one status for R-hat. `index` identifies the parameter,
+and `name` holds its configured name.
 
 Configured `mcse_mean`, `ess_mean`, and `iact_mean` fields hold per-chain vectors.
 `indicator` holds per-chain records with the frozen threshold, event probability,
@@ -429,12 +423,21 @@ function diagnostics(state::OnlineDiagnostics{T,Metrics}) where {T,Metrics}
         results = merge(results, (precision=metadata,))
     end
     total = foldl(Base.checked_add, @view(snapshot.n[1, :]); init=0)
-    return StructArray(merge((index=vec(collect(CartesianIndices(state.shape))),), results,
+    index = (index=vec(collect(CartesianIndices(state.shape))),)
+    state.names === nothing || (index = merge(index, (name=copy(state.names),)))
+    return StructArray(merge(index, results,
         (n_draws=fill(total, np), n_per_chain=counts, n_chains=fill(nc, np),
          status=isempty(selected) ? fill((;), np) : StructArray(statuses))))
 end
 
-function rhat(state::OnlineDiagnostics{T,Metrics}; kind=:rank, split=true) where {T,Metrics}
+"""
+    rhat(state::OnlineDiagnostics; kind=:basic, split=false)
+
+Read unsplit basic R-hat for each parameter. The batch default `kind=:rank,
+split=true` is unavailable online: ranks need every draw, and the split point
+moves with each draw.
+"""
+function rhat(state::OnlineDiagnostics{T,Metrics}; kind=:basic, split=false) where {T,Metrics}
     kind === :basic && split === false ||
         throw(ArgumentError("online states support only kind=:basic with split=false"))
     :rhat_basic in Metrics || throw(ArgumentError("state does not track rhat_basic"))
@@ -446,10 +449,8 @@ end
 function _online_metric(moments, blocks, metric, ::Type{T}) where {T}
     np, nc = size(moments.n)
     if metric === :autocor
-        cap = size(blocks.lags.ring, 2)
-        pairs = [[_online_autocor(moments, blocks.lags, p, c, lag, T)
-            for lag in 0:cap, c in 1:nc] for p in 1:np]
-        return (map(x -> first.(x), pairs), map(x -> last.(x), pairs))
+        columns = [[_online_autocor(moments, blocks.lags, p, c, T) for c in 1:nc] for p in 1:np]
+        return (map(x -> reduce(hcat, first.(x)), columns), map(x -> reduce(hcat, last.(x)), columns))
     elseif metric === :indicator
         indicator = blocks.indicator
         records = [[begin
@@ -466,34 +467,85 @@ function _online_metric(moments, blocks, metric, ::Type{T}) where {T}
     return (ArraysOfArrays.VectorOfSimilarVectors(values), ArraysOfArrays.VectorOfSimilarVectors(statuses))
 end
 
-function _online_precision_result(state::OnlineDiagnostics{T,Metrics}, metric, kind, estimator) where {T,Metrics}
+function _online_precision_result(state::OnlineDiagnostics{T,Metrics}, metric, kind, estimator,
+    pooled) where {T,Metrics}
     kind === :mean && estimator === :dyadic_batchmeans ||
         throw(ArgumentError("online precision requires kind=:mean and estimator=:dyadic_batchmeans"))
     metric in Metrics || throw(ArgumentError("state does not track $metric"))
     owned = _online_snapshot(state; blocks=true)
-    np, nc = size(owned.moments.n)
-    values = [getproperty(_online_precision(owned.moments, owned.blocks.precision, p, c, T), metric)
-        for c in 1:nc, p in 1:np]
+    moments, levels = owned.moments, owned.blocks.precision
+    np, nc = size(moments.n)
+    if pooled
+        draws, batches = _online_moments(T, (1, 1)), _online_moments(T, (1, 1))
+        values = [getproperty(_online_pooled_precision(moments, levels, p, T, draws, batches), metric)
+            for p in 1:np]
+        return _parameter_result(values, state.shape)
+    end
+    values = [getproperty(_online_precision(moments, levels, p, c, T), metric) for c in 1:nc, p in 1:np]
     return reshape(values, (nc, state.shape...))
 end
 
 """
-    mcse(state::OnlineDiagnostics; kind=:mean, estimator=:dyadic_batchmeans)
-    ess(state::OnlineDiagnostics; kind=:mean, estimator=:dyadic_batchmeans)
-    iact(state::OnlineDiagnostics; kind=:mean, estimator=:dyadic_batchmeans)
+    mcse(state::OnlineDiagnostics; kind=:mean, estimator=:dyadic_batchmeans, pooled=false)
+    ess(state::OnlineDiagnostics; kind=:mean, estimator=:dyadic_batchmeans, pooled=false)
+    iact(state::OnlineDiagnostics; kind=:mean, estimator=:dyadic_batchmeans, pooled=false)
 
 Read configured raw-mean precision separately for each chain. The result shape
 is chain × parameter axes, including the chain axis for one chain. Unavailable
 estimates are NaN; `diagnostics(state)` also reports status and batch metadata.
 The state must select the corresponding `:mcse_mean`, `:ess_mean`, or
 `:iact_mean` metric. These estimates do not measure rank-based bulk precision.
+
+`pooled=true` returns one value per parameter for the mean of all draws, from
+replicated batch means: all complete batches center on their pooled mean, so
+chains that disagree inflate the long-run variance and lower the ESS. Every chain
+with draws uses the batch width of the shortest one. This assumes independent
+chains with a common stationary law; it does not replace R-hat.
 """
-mcse(state::OnlineDiagnostics; kind=:mean, estimator=:dyadic_batchmeans) =
-    _online_precision_result(state, :mcse_mean, kind, estimator)
-ess(state::OnlineDiagnostics; kind=:mean, estimator=:dyadic_batchmeans) =
-    _online_precision_result(state, :ess_mean, kind, estimator)
-iact(state::OnlineDiagnostics; kind=:mean, estimator=:dyadic_batchmeans) =
-    _online_precision_result(state, :iact_mean, kind, estimator)
+mcse(state::OnlineDiagnostics; kind=:mean, estimator=:dyadic_batchmeans, pooled::Bool=false) =
+    _online_precision_result(state, :mcse_mean, kind, estimator, pooled)
+ess(state::OnlineDiagnostics; kind=:mean, estimator=:dyadic_batchmeans, pooled::Bool=false) =
+    _online_precision_result(state, :ess_mean, kind, estimator, pooled)
+iact(state::OnlineDiagnostics; kind=:mean, estimator=:dyadic_batchmeans, pooled::Bool=false) =
+    _online_precision_result(state, :iact_mean, kind, estimator, pooled)
+
+"""
+    progress_summary(state::OnlineDiagnostics)
+
+Return `(n_draws, max_rhat, min_ess)` for a live progress display. `max_rhat` is
+the largest online basic R-hat and `min_ess` the smallest pooled mean ESS (see
+`ess(state; pooled=true)`), each over parameters with a value. Running producers
+almost never stop at equal chain lengths, so `max_rhat` also accepts unequal
+lengths: each chain uses all its draws and its own variance divisor, and the
+shortest length enters `(n-1)/n`. Chains that differ by d draws change the
+between-chain term by a relative O(d/n) against equal lengths.
+`rhat(state)` keeps the batch rule and needs equal lengths. A field is NaN when
+its metric (`:rhat_basic`, or any of `:mcse_mean`, `:ess_mean`, `:iact_mean`) is
+not configured or no parameter has a value. Holds all chain locks while it reads,
+without copying the state.
+"""
+function progress_summary(state::OnlineDiagnostics{T,Metrics}) where {T,Metrics}
+    levels = state.blocks.precision
+    nc = length(state.locks)
+    means, variances = Vector{T}(undef, nc), Vector{T}(undef, nc)
+    draws, batches = _online_moments(T, (1, 1)), _online_moments(T, (1, 1))
+    return _online_locked(state, eachindex(state.locks)) do
+        moments = state.moments
+        max_rhat = min_ess = T(NaN)
+        for p in axes(moments.n, 1)
+            if :rhat_basic in Metrics
+                value = first(_online_rhat(moments, p, T, means, variances; unequal=true))
+                isnan(value) || (max_rhat = isnan(max_rhat) ? value : max(max_rhat, value))
+            end
+            if levels !== nothing
+                value = _online_pooled_precision(moments, levels, p, T, draws, batches).ess_mean
+                isnan(value) || (min_ess = isnan(min_ess) ? value : min(min_ess, value))
+            end
+        end
+        n_draws = foldl(Base.checked_add, @view(moments.n[1, :]); init=0)
+        (n_draws=n_draws, max_rhat=max_rhat, min_ess=min_ess)
+    end
+end
 
 """
     autocor(state::OnlineDiagnostics; lags=nothing)
@@ -511,7 +563,9 @@ function autocor(state::OnlineDiagnostics{T,Metrics}; lags=nothing) where {T,Met
     all(k -> k isa Integer && 0 <= k <= cap, selected) ||
         throw(ArgumentError("requested lags must be within the configured max_lag"))
     np, nc = size(owned.moments.n)
-    values = [first(_online_autocor(owned.moments, owned.blocks.lags, p, c, lag, T))
-        for lag in selected, c in 1:nc, p in 1:np]
+    values = Array{T}(undef, length(selected), nc, np)
+    for p in 1:np, c in 1:nc
+        values[:, c, p] = first(_online_autocor(owned.moments, owned.blocks.lags, p, c, T))[selected .+ 1]
+    end
     return reshape(values, (length(selected), nc, state.shape...))
 end
