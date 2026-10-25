@@ -49,24 +49,77 @@ and statuses are per-chain vectors. Basic R-hat is one value per parameter.
 Unequal chain lengths leave basic R-hat unavailable while per-chain moments remain
 available. Online R-hat requires `kind=:basic, split=false` explicitly.
 
-Select `:mcse_mean`, `:ess_mean` or `:iact_mean` for per-chain online precision.
-The named `:dyadic_batchmeans` estimator keeps complete batch summaries at
-powers-of-two widths. It uses O(parameters × chains × log(draws)) storage.
-Each report states the chosen width, completed batches and discarded remainder.
-The mean and MCSE denominator use every draw; the LRV estimate uses complete
-batches centered on their own mean. This differs from batch `:batchmeans`,
-which reports precision for the retained complete-batch mean.
+## Sampler loop
 
-Online precision needs stationarity and sufficient mixing/moments, as detailed
-in its docstring. Finite batches can underestimate long-run variance. A nominal
-95% interval is not an exact coverage or repeated-check stopping guarantee.
-Online mean ESS is distinct from rank-based bulk ESS. Online rank/folded R-hat,
-empirical-quantile precision and PSIS are not inferred from moment summaries.
+This loop runs one task per chain, checks a snapshot after each round, and
+stops on a sampler-owned rule. Basic R-hat needs equal chain lengths, so check
+between rounds rather than during them. Warmup draws do not enter the state.
+`NaN` fails both comparisons, so unavailable metrics never stop the loop.
 
-Select `:indicator` with a fixed `threshold` for event-probability precision.
-Select `:autocor` with explicit `max_lag` for a bounded lag buffer. Its globally
-centered correlations match the batch definition; a fixed lag cap does not
-provide an unrestricted long-run variance estimate.
+```@example loop
+using MCMCMetrics, Random
+
+# Random-walk Metropolis for a standard normal target.
+function metropolis!(x, rng, n)
+    block = Matrix{Float64}(undef, n, length(x))
+    for i in 1:n
+        y = x .+ 0.8 .* randn(rng, length(x))
+        2log(rand(rng)) < sum(abs2, x) - sum(abs2, y) && (x .= y)
+        block[i, :] = x
+    end
+    block
+end
+
+nchains, p = 4, 3
+rngs = [Xoshiro(c) for c in 1:nchains]
+positions = [3 .* randn(rng, p) for rng in rngs]
+foreach(c -> metropolis!(positions[c], rngs[c], 500), 1:nchains)  # warmup
+state = OnlineDiagnostics(Float64; nchains, parameter_shape=(p,),
+    metrics=(:mean, :variance, :rhat_basic, :ess_mean))
+for round in 1:100
+    @sync for c in 1:nchains
+        Threads.@spawn append!(state, metropolis!(positions[c], rngs[c], 250); chain=c)
+    end
+    report = diagnostics(state)
+    all(<(1.01), report.rhat_basic) && all(r -> sum(r.ess_mean) >= 400, report) && break
+end
+report = diagnostics(state)
+(n_draws=first(report.n_draws), rhat=report.rhat_basic, ess=sum.(report.ess_mean))
+```
+
+Repeated checks do not give a sequential error guarantee. Choose the round
+length and thresholds before sampling.
+
+## Parameter metrics
+
+Storage counts parameters p, chains m and draws n.
+
+| Metric choices | Result | Configuration | Storage |
+|:--|:--|:--|:--|
+| `:mean`, `:variance` | Per-chain vectors from anchored, scaled centered moments | | O(p m) |
+| `:rhat_basic` | Unsplit basic R-hat per parameter | Equal chain lengths | Shared moments |
+| `:mcse_mean`, `:ess_mean`, `:iact_mean` | Per-chain raw-mean precision from dyadic batch means | | O(p m log n) |
+| `:indicator` | The same precision for `I(x <= threshold)` | Finite scalar or parameter-shaped `threshold`, copied to T | O(p m log n) |
+| `:autocor` | Globally centered autocorrelations at lags 0 to `max_lag` | `max_lag >= 0` | O(p m max_lag) |
+
+The `:dyadic_batchmeans` estimator uses width `2^floor(floor(log2(n))/2)` and the
+sample variance of complete batch means centered on their own mean. The mean
+and the MCSE denominator use all n draws. This differs from batch `:batchmeans`,
+which reports precision for the retained complete-batch mean. Each report states
+the width, completed batches and discarded remainder. Zero estimated long-run
+variance makes precision unavailable. ESS is not capped.
+
+Consistency needs mixing and moment conditions, for example a strong Brownian
+approximation with partial-sum error `o(n^(1/4))`, ergodic first and second
+moments, and positive long-run variance. Finite batches can underestimate the
+long-run variance. A nominal 95% interval is not an exact coverage or
+repeated-check stopping guarantee. Online mean ESS differs from rank-based bulk
+ESS. Online rank/folded R-hat, empirical-quantile precision and PSIS are not
+inferred from moment summaries. A fixed lag cap does not give an unrestricted
+long-run variance estimate.
+
+Compressed runs advance precision in O(p log n) work and lags with at most
+`max_lag` boundary draws, independent of the repetition count.
 
 ## Auxiliary online metrics
 

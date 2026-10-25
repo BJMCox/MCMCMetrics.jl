@@ -13,7 +13,7 @@ The package is not yet registered in General. Install it from GitHub:
 
 ```julia
 using Pkg
-Pkg.add(url="https://github.com/BJMCox/MCMCMetrics.jl")
+Pkg.add(url="https://github.com/JuliaBayes/MCMCMetrics.jl")
 ```
 
 ## Check a batch

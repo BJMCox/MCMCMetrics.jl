@@ -1,4 +1,5 @@
 using Test, Statistics
+import Random
 import MCMCMetrics, MCMCDiagnosticTools, PSIS, PosteriorStats
 
 # MCMCDiagnosticTools 0.3.19. Even lengths avoid its rank-before-split
@@ -65,6 +66,12 @@ end
     states = [0 1;0 1;0 1;1 0;1 0;1 0;0 1;0 1]
     comparison = MCMCMetrics.categorical_weiss(states)
     independent = MCMCDiagnosticTools.weiss(states)
+    @test [comparison.statistic,comparison.pvalue] ≈ [independent[1],independent[3]]
+    # IID draws whose phi estimate is negative noise, which the reference clips.
+    states = rand(Random.Xoshiro(3),1:3,1000,4)
+    comparison = MCMCMetrics.categorical_weiss(states)
+    independent = MCMCDiagnosticTools.weiss(states)
+    @test comparison.phi == 0
     @test [comparison.statistic,comparison.pvalue] ≈ [independent[1],independent[3]]
 
     ratios = log.(collect(1.:200))

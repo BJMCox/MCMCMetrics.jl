@@ -30,6 +30,15 @@
     @test scaled.halfwidth / 1e200 ≈ h.halfwidth && scaled.status === :ok
     @test heidelberger_welch(ones(40)).status === :constant
 
+    # Null calibration on IID chains. Heidelberger-Welch stops at the first
+    # accepted truncation, so only its untruncated test has size alpha.
+    iid = randn(Random.Xoshiro(29), 1000, 2000)
+    @test 0.03 <= count(<(0.05), geweke(iid).pvalue)/2000 <= 0.075
+    hw = heidelberger_welch(iid)
+    @test 0.03 <= count(!=(0), hw.burnin)/2000 <= 0.07
+    @test count(hw.stationarity)/2000 >= 0.99
+    @test count(<(0.05), geweke(iid .+ (1:1000) ./ 1000).pvalue)/2000 >= 0.9
+
     binary = repeat([0.0,0,0,1,0,1,1,1],100)
     r = raftery_lewis(binary; prob=0.5, atol=0.1, confidence=0.9)
     # All binary triples occur equally; transition probabilities are 1/2 and 199/399.

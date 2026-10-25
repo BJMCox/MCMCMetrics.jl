@@ -6,7 +6,7 @@ DocMeta.setdocmeta!(MCMCMetrics, :DocTestSetup, :(using MCMCMetrics); recursive=
 makedocs(
     root = @__DIR__,
     sitename = "MCMCMetrics.jl",
-    repo = Documenter.Remotes.GitHub("BJMCox", "MCMCMetrics.jl"),
+    repo = Documenter.Remotes.GitHub("JuliaBayes", "MCMCMetrics.jl"),
     modules = [MCMCMetrics],
     checkdocs = :exports,
     doctest = true,
@@ -14,7 +14,7 @@ makedocs(
     format = Documenter.HTML(
         prettyurls = true,
         edit_link = "main",
-        canonical = "https://bjmcox.github.io/MCMCMetrics.jl/",
+        canonical = "https://juliabayes.github.io/MCMCMetrics.jl/",
     ),
     pages = [
         "Getting started" => "index.md",

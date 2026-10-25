@@ -57,9 +57,11 @@ Assigning group IDs cannot create that design. One-draw subchains require
 
 `categorical_summary` reports integer-state occupations and transitions,
 including caller-supplied unvisited levels. `categorical_weiss` compares state
-frequencies under a shared DAR(1) dependence model. It returns unavailable when
-the fitted dependence lies outside that model. Sparse states weaken the
-chi-square approximation. General categorical Markov chains need not be DAR(1).
+frequencies under a shared DAR(1) dependence model. A small negative dependence
+estimate is noise at the model boundary and is clipped to zero. The test returns
+unavailable when the estimate is more than four standard errors negative.
+Sparse states weaken the chi-square approximation. General categorical Markov
+chains need not be DAR(1).
 
 ## Sampler metadata and movement
 

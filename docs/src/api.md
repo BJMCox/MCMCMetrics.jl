@@ -3,7 +3,8 @@
 ## Batch diagnostics
 
 Optional chain adapters support R-hat, ESS, MCSE, autocorrelation, IACT, aggregate
-reports, and diagnostic curves. They return dictionaries keyed by parameter.
+reports, and diagnostic curves. They return an `OrderedDict` keyed by
+parameter. `diagnostics` returns one report with a `parameter` column.
 See [Sampler adapters](@ref) for examples and selection rules.
 
 ```@docs
