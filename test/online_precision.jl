@@ -183,6 +183,14 @@ end
         push!(huge,0f0;chain=1,count=2^26)
         push!(huge,1f0;chain=1,count=2^26)
         @test autocor(huge)[:,1] ≈ Float32[1,1-3/2^27,1-6/2^27]
+
+        # Re-centering follows an initial outlier, a drifting mean and tiny units.
+        noise = Float32[sin(0.7f0i) + mod(5i, 7) / 7 for i in 1:3000]
+        for x in (vcat(1f4, noise[2:end] .+ (2:3000) ./ 100f0), 1f-30 .* noise)
+            moving = OnlineDiagnostics(Float32;nchains=1,metrics=(:autocor,),max_lag=4)
+            append!(moving,x;chain=1)
+            @test autocor(moving)[:,1] ≈ Float32.(online_lag_oracle(x,4)) atol=4eps(Float32)
+        end
     end
 
     @testset "Ordered-state lifecycle and coherent snapshots" begin

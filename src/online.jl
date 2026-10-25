@@ -21,7 +21,8 @@ together with ergodic first/second moments and positive long-run variance.
 `:indicator` applies that estimator to `I(x <= threshold)`. Supply a finite
 scalar or parameter-shaped `threshold`, copied and converted to T at construction.
 `:autocor` requires explicit `max_lag >= 0` and retains a bounded ring plus
-paired moments in O(parameters × chains × max_lag) storage. Compressed runs
+compensated lag sums in O(parameters × chains × max_lag) storage, re-centered
+after every n/8 draws. Compressed runs
 advance precision in O(parameters × log(n)) work and lags with at most max_lag
 boundary draws, independent of the logical repetition count. Time-dependent
 configurations do not support `merge!`.
@@ -108,7 +109,7 @@ include("online/covariance.jl")
     if blocks.indicator !== nothing
         _online_prepare!(blocks.indicator.levels, T, np, c, n + count)
     end
-    blocks.lags === nothing || _online_lags!(blocks.lags, draw, c, n, count)
+    blocks.lags === nothing || _online_lags!(blocks.lags, state.moments, draw, c, n, count)
     for (p, x) in enumerate(draw)
         blocks.precision === nothing || _online_batches!(blocks.precision, state.moments, p, c, x, count)
         if blocks.indicator !== nothing
@@ -456,10 +457,8 @@ end
 function _online_metric(moments, blocks, metric, ::Type{T}) where {T}
     np, nc = size(moments.n)
     if metric === :autocor
-        cap = size(blocks.lags.ring, 2)
-        pairs = [[_online_autocor(moments, blocks.lags, p, c, lag, T)
-            for lag in 0:cap, c in 1:nc] for p in 1:np]
-        return (map(x -> first.(x), pairs), map(x -> last.(x), pairs))
+        columns = [[_online_autocor(moments, blocks.lags, p, c, T) for c in 1:nc] for p in 1:np]
+        return (map(x -> reduce(hcat, first.(x)), columns), map(x -> reduce(hcat, last.(x)), columns))
     elseif metric === :indicator
         indicator = blocks.indicator
         records = [[begin
@@ -521,7 +520,9 @@ function autocor(state::OnlineDiagnostics{T,Metrics}; lags=nothing) where {T,Met
     all(k -> k isa Integer && 0 <= k <= cap, selected) ||
         throw(ArgumentError("requested lags must be within the configured max_lag"))
     np, nc = size(owned.moments.n)
-    values = [first(_online_autocor(owned.moments, owned.blocks.lags, p, c, lag, T))
-        for lag in selected, c in 1:nc, p in 1:np]
+    values = Array{T}(undef, length(selected), nc, np)
+    for p in 1:np, c in 1:nc
+        values[:, c, p] = first(_online_autocor(owned.moments, owned.blocks.lags, p, c, T))[selected .+ 1]
+    end
     return reshape(values, (length(selected), nc, state.shape...))
 end
