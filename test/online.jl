@@ -1,3 +1,15 @@
+# One thread only interleaves tasks, which cannot expose a missing lock.
+function online_threaded(f, name)
+    if Threads.nthreads() > 1
+        @testset "$name" begin
+            f()
+        end
+    else
+        @info "Skipping \"$name\": run Julia with several threads, e.g. JULIA_NUM_THREADS=4."
+        @test_skip name
+    end
+end
+
 @testset "Online diagnostics" begin
     @testset "Moments and basic R-hat" begin
         for T in (Float32, Float64)
@@ -175,7 +187,7 @@
         @test diagnostics(almostfull).n_per_chain[1] == [0, typemax(Int)]
     end
 
-    @testset "Concurrent producers and snapshots" begin
+    online_threaded("Concurrent producers and snapshots") do
         state = OnlineDiagnostics(Float64; nchains=2)
         @sync for c in 1:2, _ in 1:4
             Threads.@spawn for _ in 1:20
@@ -209,6 +221,36 @@
         @test all(r -> r.n_per_chain[1][1] == r.n_per_chain[1][2], observations)
         @test diagnostics(coherent).n_per_chain[1] == [200, 200]
         @test diagnostics(coherent).mean[1] ≈ [2.0, 2.0]
+
+        # Eight writers share chain 1 while readers take every kind of snapshot.
+        metrics = (:mean, :variance, :rhat_basic, :ess_mean, :autocor, :mc_cov)
+        shared = OnlineDiagnostics(Float64; nchains=2, parameter_shape=(2,), metrics, max_lag=3)
+        blocks = [[sin(7w + i) + w for i in 1:200, _ in 1:2] for w in 1:8]
+        snapshots = Channel{Any}(Inf)
+        writers = map(1:8) do w
+            Threads.@spawn for i in 1:2:200
+                append!(shared, blocks[w][i:i, :]; chain=1)
+                push!(shared, blocks[w][i + 1, :]; chain=1)
+            end
+        end
+        readers = map(1:2) do _
+            Threads.@spawn while !all(istaskdone, writers)
+                put!(snapshots, (diagnostics(shared), progress_summary(shared)))
+                mc_cov(shared)
+                yield()
+            end
+        end
+        foreach(wait, writers)
+        foreach(wait, readers)
+        close(snapshots)
+        @test all(snapshots) do (report, summary)
+            only(unique(report.n_draws)) == sum(report.n_per_chain[1]) <= summary.n_draws
+        end
+        expected = reduce(vcat, blocks)
+        report = diagnostics(shared)
+        @test report.n_per_chain[1] == [1600, 0]
+        @test [report.mean[p][1] for p in 1:2] ≈ vec(mean(expected; dims=1)) rtol=1e-14
+        @test [report.variance[p][1] for p in 1:2] ≈ vec(var(expected; dims=1)) rtol=1e-14
     end
 
     @testset "Centered and scaled moments" begin
