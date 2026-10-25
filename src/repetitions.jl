@@ -71,6 +71,9 @@ function _autocov_function(z, runs, autocov, max_lag_work)
         covariance = _fft_autocov(reshape(z, runs.n, length(runs.ranges)))
         return k -> covariance[k + 1]
     end
+    # Unit counts are dense draws: the dense kernel needs no cursor or budget.
+    m = length(runs.ranges)
+    length(z) == runs.n * m && return _dense_autocov(reshape(z, runs.n, m))
     work = Ref(0)
     return function (k)
         # Count a conservative two cursor advances per stored run and lag.

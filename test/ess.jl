@@ -58,6 +58,7 @@ end
     long = cumsum(randn(Random.Xoshiro(2), 200_000, 4); dims=1)
     diagnostics(walk)
     @test @elapsed(diagnostics(long)) < 10
+    @test @elapsed(mcse(long; kind=:sd)) < 10
 end
 
 @testset "Autocorrelation and per-chain IACT" begin

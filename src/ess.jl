@@ -14,13 +14,14 @@ Compute ranks and quantile thresholds after splitting. At least four retained
 draws per split chain are required. Identical pooled values, or identical
 transformed values, return a typed `NaN`; a single constant chain does not.
 So does a parameter with a non-finite positive-count draw, here and in
-[`mcse`](@ref), without affecting other parameters. Integer repetition counts retain the exact run order,
-including runs crossing split boundaries, without expanded storage.
+[`mcse`](@ref), without affecting other parameters. Integer repetition counts
+retain the exact run order, including runs crossing split boundaries, without
+expanded storage.
 
 The direct autocovariance divides by the chain length at every lag. Dense
-Geyer ESS computes the first `16*ndigits(n; base=2)` lags directly and any later
-lags, which only slowly mixing chains reach, from one internal radix-2 FFT of
-the same quantity. This bounds the cost by O(n log n) per transform. The Geyer
+draws (all counts one) use the first `16*ndigits(n; base=2)` lags directly and
+any later lags, which only slowly mixing chains reach, from one internal radix-2
+FFT of the same quantity. This bounds the cost by O(n log n). The Geyer
 estimator truncates at the first nonpositive pair of autocorrelations, then
 reduces each retained pair to the minimum of all preceding pairs (IMS).
 It uses every available complete pair, without a lag cap or ESS cap.
@@ -36,8 +37,8 @@ references call half this quantity the integrated autocorrelation time.
 
 `autocov=:fft` requires loading FFTW and dense draws; it changes only the
 autocovariance computation. Direct arithmetic remains the default. Compressed
-and Sokal direct calculations limit cursor work to `max_lag_work` per parameter
-and transform (two stored runs per lag is the charged upper bound). The default
+draws with a count above one limit direct cursor work to `max_lag_work` per
+parameter and transform (two stored runs per lag is the charged upper bound). The default
 `nothing` means `max(100_000_000, 2S^2)` for `S` stored positive-count draws,
 enough for about `S` lags. Exceeding the budget throws a work-limit exception;
 increase it explicitly to permit more work. Estimators never truncate silently
