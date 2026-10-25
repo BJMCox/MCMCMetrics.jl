@@ -2,6 +2,7 @@ function _precision_parameter_result(d, p; estimand=:mean, split=true,
     estimator=:geyer, autocov=:direct, prob=0.5, window=5, batch_size=nothing,
     max_lag_work=100_000_000)
     T = _floattype(d)
+    d.finite[p] || return (T(NaN), :nonfinite)
     if estimator in (:batchmeans, :overlapping)
         return _batch_mcse_result(d, p, estimator, batch_size, max_lag_work)
     end

@@ -28,6 +28,18 @@
     @test iact(ragged) ≈ reshape([iact(x[:, 1]), iact(x[1:8, 2])], 2, 1)
 end
 
+@testset "A non-finite parameter keeps the other rows" begin
+    z = [sin(0.9i + 2c + k) + 0.5cos(2.3i * c * k) for i in 1:40, c in 1:4, k in 1:3]
+    z[5, 2, 3] = Inf
+    result, clean = diagnostics(z), diagnostics(z[:, :, 1:2])
+    @test result[1:2] == clean
+    @test all(==(:nonfinite), result.status[3])
+    @test all(isnan, (result.rhat[3], result.ess_bulk[3], result.ess_tail[3], result.mcse_mean[3]))
+    @test isequal(rhat(z), [rhat(z[:, :, 1:2]); NaN])
+    @test isequal(ess(z), [ess(z[:, :, 1:2]); NaN])
+    @test isequal(mcse(z), [mcse(z[:, :, 1:2]); NaN])
+end
+
 @testset "Compressed aggregate keeps available metrics" begin
     runs = [0. 3; 1 0; 4 1; 2 4; 5 2; 1 5]
     counts = fill(3, size(runs))

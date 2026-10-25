@@ -11,10 +11,12 @@ direct Geyer autocovariances. A single chain leaves R-hat unavailable while
 retaining its supported precision diagnostics. Compressed inputs use exact
 run overlaps without expansion. Their explicit `max_lag_work` budget yields
 `:work_limit` for an exhausted precision metric, preserving other results.
+A parameter with a non-finite positive-count draw gets `NaN` metrics with
+status `:nonfinite`; the other parameters stay available.
 """
 function diagnostics(x; drawdim=1, chaindim=_default_chaindim(x), counts=nothing,
     max_lag_work=100_000_000)
-    d = _draws(x; drawdim, chaindim, counts)
+    d = _draws(x; drawdim, chaindim, counts, nonfinite=true)
     max_lag_work > 0 || throw(ArgumentError("max_lag_work must be positive"))
     T, P = _floattype(d), prod(d.shape)
     n_draws = foldl(Base.Checked.checked_add, d.lengths; init=0)
@@ -33,6 +35,7 @@ end
 
 function _diagnostic_metrics(d, p, max_lag_work)
     T = _floattype(d)
+    d.finite[p] || return ntuple(_ -> (T(NaN), :nonfinite), 4)
     if isnothing(d.counts) && all(==(first(d.lengths)), d.lengths)
         runs = _parameter_runs(d, p, true)
         rankvalues = _rank_normalize(runs.values, runs.weights, T)

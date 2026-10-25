@@ -12,7 +12,9 @@ Indicators and diagnostic arithmetic retain the observation floating type.
 By default, split each chain in half and discard its middle draw when odd.
 Compute ranks and quantile thresholds after splitting. At least four retained
 draws per split chain are required. Identical pooled values, or identical
-transformed values, return a typed `NaN`; a single constant chain does not. Integer repetition counts retain the exact run order,
+transformed values, return a typed `NaN`; a single constant chain does not.
+So does a parameter with a non-finite positive-count draw, here and in
+[`mcse`](@ref), without affecting other parameters. Integer repetition counts retain the exact run order,
 including runs crossing split boundaries, without expanded storage.
 
 The direct autocovariance divides by the chain length at every lag. Dense
@@ -48,7 +50,7 @@ function ess(x; kind::Symbol=:bulk, split::Bool=true, estimator::Symbol=:geyer,
     drawdim=1, chaindim=_default_chaindim(x), counts=nothing)
     _check_ess_options(kind, estimator, autocov, prob, interval)
     _check_window(window, max_lag_work)
-    d = _draws(x; drawdim, chaindim, counts)
+    d = _draws(x; drawdim, chaindim, counts, nonfinite=true)
     _check_fft_counts(d, autocov)
     values = _parameter_values(d) do p
         _ess_parameter_result(d, p; kind, split, prob, interval,
@@ -103,7 +105,7 @@ function mcse(x; estimand::Symbol=:mean, split::Bool=true, estimator::Symbol=:ge
     end
     _check_window(window, max_lag_work)
     estimand in (:quantile, :median) && _check_ess_options(:quantile, :geyer, :direct, prob, nothing)
-    d = _draws(x; drawdim, chaindim, counts)
+    d = _draws(x; drawdim, chaindim, counts, nonfinite=true)
     _check_fft_counts(d, autocov)
     values = _parameter_values(d) do p
         _precision_parameter_result(d, p; estimand, split, estimator,
@@ -240,6 +242,7 @@ function _ess_parameter_result(d, p; kind=:bulk, split=true, prob=0.95,
     interval=nothing, samples=nothing, ranked=nothing,
     estimator=:geyer, autocov=:direct, window=5, max_lag_work=100_000_000)
     T = _floattype(d)
+    d.finite[p] || return (T(NaN), :nonfinite)
     all(==(first(d.lengths)), d.lengths) || return (T(NaN), :unequal_chain_lengths)
     first(d.lengths) ÷ (split ? 2 : 1) >= 4 || return (T(NaN), :insufficient_draws)
     if !isnothing(d.counts) || estimator !== :geyer || autocov !== :direct

@@ -3,6 +3,7 @@ struct _Draws{T,C,W,S}
     counts::W
     shape::S
     lengths::Vector{Int}
+    finite::BitVector
 end
 
 _floattype(::_Draws{T}) where {T} = T
@@ -45,12 +46,15 @@ function _checked_counts(counts, chains)
 end
 
 # Pass the observation type S from the input type so T and the result infer.
-function _validated_draws(chains, counts, shape, ::Type{S}; allow_neginf=false) where {S}
+# `nonfinite=true` marks a parameter instead of throwing, so one bad parameter
+# leaves the others available.
+function _validated_draws(chains, counts, shape, ::Type{S}; allow_neginf=false, nonfinite=false) where {S}
     isempty(chains) && throw(ArgumentError("at least one chain is required"))
     T = _floattype(S)
     all(c -> eltype(c) == S, chains) || throw(ArgumentError("all chains must use the same observation type"))
     weights = _checked_counts(counts, chains)
     lengths = Vector{Int}(undef, length(chains))
+    finite = trues(prod(shape))
     for c in eachindex(chains)
         chain = chains[c]
         size(chain, 1) > 0 || throw(ArgumentError("the draw axis must not be empty"))
@@ -58,11 +62,12 @@ function _validated_draws(chains, counts, shape, ::Type{S}; allow_neginf=false) 
         for p in axes(chain, 2), i in axes(chain, 1)
             if (isnothing(weights) || weights[c][i] > 0) &&
                 !(isfinite(chain[i, p]) || (allow_neginf && chain[i,p] == -Inf))
-                throw(ArgumentError("positive-count observations must be finite"))
+                nonfinite || throw(ArgumentError("positive-count observations must be finite"))
+                finite[p] = false
             end
         end
     end
-    _Draws{T,typeof(chains),typeof(weights),typeof(shape)}(chains, weights, shape, lengths)
+    _Draws{T,typeof(chains),typeof(weights),typeof(shape)}(chains, weights, shape, lengths, finite)
 end
 
 # The tuple length follows from N and the type of chaindim, so shapes infer.
@@ -72,7 +77,7 @@ function _parameter_dims(::Val{N}, drawdim, chaindim) where {N}
     ntuple(i -> i < lo ? i : i + 1 < hi ? i + 1 : i + 2, Val(N - 2))
 end
 
-function _draws(x::AbstractArray{<:Any,N}; drawdim=1, chaindim=_default_chaindim(x), counts=nothing, allow_neginf=false) where {N}
+function _draws(x::AbstractArray{<:Any,N}; drawdim=1, chaindim=_default_chaindim(x), counts=nothing, allow_neginf=false, nonfinite=false) where {N}
     Base.require_one_based_indexing(x)
     drawdim isa Integer && 1 <= drawdim <= N || throw(ArgumentError("invalid draw dimension"))
     isnothing(chaindim) || (chaindim isa Integer && 1 <= chaindim <= N && chaindim != drawdim) ||
@@ -94,10 +99,10 @@ function _draws(x::AbstractArray{<:Any,N}; drawdim=1, chaindim=_default_chaindim
         weights = isnothing(counts) ? nothing : collect(eachcol(counts))
     end
     # The chain view type depends on runtime dimensions; keep T and the shape inferable.
-    _validated_draws(chains, weights, shape, eltype(x); allow_neginf)::_Draws{_floattype(eltype(x)),<:Any,<:Any,typeof(shape)}
+    _validated_draws(chains, weights, shape, eltype(x); allow_neginf, nonfinite)::_Draws{_floattype(eltype(x)),<:Any,<:Any,typeof(shape)}
 end
 
-function _draws(x::AbstractVector{<:AbstractMatrix}; drawdim=1, chaindim=nothing, counts=nothing, allow_neginf=false)
+function _draws(x::AbstractVector{<:AbstractMatrix}; drawdim=1, chaindim=nothing, counts=nothing, allow_neginf=false, nonfinite=false)
     Base.require_one_based_indexing(x)
     isempty(x) && throw(ArgumentError("at least one chain is required"))
     drawdim in (1, 2) || throw(ArgumentError("nested matrices require drawdim=1 or drawdim=2"))
@@ -107,7 +112,7 @@ function _draws(x::AbstractVector{<:AbstractMatrix}; drawdim=1, chaindim=nothing
     p = size(first(chains), 2)
     p > 0 || throw(ArgumentError("the parameter axis must not be empty"))
     all(c -> size(c, 2) == p, chains) || throw(DimensionMismatch("chain parameter shapes must match"))
-    _validated_draws(chains, counts, (p,), eltype(first(x)); allow_neginf)
+    _validated_draws(chains, counts, (p,), eltype(first(x)); allow_neginf, nonfinite)
 end
 
 # Subtract before conversion so integer offsets do not erase small differences.

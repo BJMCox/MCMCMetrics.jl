@@ -15,7 +15,8 @@ Splitting omits the middle draw of odd-length chains before ranking or folding.
 weights. Logical chain lengths must match. Computation uses stored runs without
 expanding them. Identical pooled values, or identical folded values, make R-hat
 unavailable (`NaN`). A constant chain among varying chains gives a large R-hat,
-and `Inf` when every split chain is constant.
+and `Inf` when every split chain is constant. A parameter with a non-finite
+positive-count draw returns `NaN` without affecting other parameters.
 
 Float32 and Float64 observations retain their arithmetic and result type.
 Integer observations use their Julia floating counterpart, with exact integer
@@ -25,7 +26,7 @@ otherwise an array with the parameter shape.
 function rhat(x; kind=:rank, split=true, drawdim=1, chaindim=_default_chaindim(x), counts=nothing)
     kind in (:rank, :basic) || throw(ArgumentError("R-hat kind must be :rank or :basic"))
     split isa Bool || throw(ArgumentError("split must be a Bool"))
-    d = _draws(x; drawdim, chaindim, counts)
+    d = _draws(x; drawdim, chaindim, counts, nonfinite=true)
     length(d.chains) >= 2 || throw(ArgumentError("R-hat requires at least two independent chains"))
     all(==(first(d.lengths)), d.lengths) || throw(ArgumentError("R-hat requires equal logical chain lengths"))
     _parameter_result(_parameter_values(p -> _rhat_parameter_result(d, p; kind, split).value, d), d.shape)
@@ -155,6 +156,7 @@ end
 
 function _rhat_parameter_result(d, p; kind=:rank, split=true, runs=nothing, ranked=nothing)
     T = _floattype(d)
+    d.finite[p] || return (value=T(NaN), status=:nonfinite)
     length(d.chains) >= 2 || return (value=T(NaN), status=:insufficient_chains)
     all(==(first(d.lengths)), d.lengths) || return (value=T(NaN), status=:unequal_chain_lengths)
     n = first(d.lengths)
