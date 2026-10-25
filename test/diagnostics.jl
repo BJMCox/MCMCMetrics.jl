@@ -5,8 +5,12 @@
     @test result.rhat ≈ rhat(x)
     @test result.ess_bulk ≈ ess(x)
     @test result.mcse_mean ≈ mcse(x)
-    @test result.status == (rhat=:ok, ess_bulk=:ok, ess_tail=:constant, mcse_mean=:ok)
+    @test result.status == (rhat=:ok, ess_bulk=:ok, ess_tail=:constant, mcse_mean=:ok, mcse_sd=:ok)
     @test isnan(result.ess_tail) && result.mcse_mean isa Float32
+    # posterior's summarise_draws: pooled mean, sd (N-1) and type-7 quantiles.
+    @test result.mean ≈ mean(x) && result.sd ≈ std(vec(x))
+    @test [result.q5, result.q95] ≈ quantile(vec(x), [0.05, 0.95])
+    @test result.mcse_sd ≈ mcse(x; kind=:sd)
 
     single = only(diagnostics(view(x, :, 1)))
     @test isnan(single.rhat) && single.status.rhat === :insufficient_chains
@@ -59,6 +63,9 @@ end
     @test result.n_draws == length(expanded) && result.status.rhat === :ok
     @test result.ess_bulk ≈ ess(expanded)
     @test result.mcse_mean ≈ mcse(expanded)
+    dense = only(diagnostics(expanded))
+    @test [result.mean, result.sd, result.q5, result.q95, result.mcse_sd] ≈
+        [dense.mean, dense.sd, dense.q5, dense.q95, dense.mcse_sd]
     limited = only(diagnostics(runs;counts,max_lag_work=1))
     @test limited.rhat ≈ result.rhat && limited.status.ess_bulk === :work_limit && limited.status.mcse_mean === :work_limit
 end

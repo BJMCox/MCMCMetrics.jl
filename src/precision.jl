@@ -14,6 +14,7 @@ function _precision_parameter_result(d, p; kind=:mean, split=true,
     full = _parameter_runs(d, p, false)
     runs = _parameter_runs(d, p, split)
     z, scale = _scaled_samples(full.values, T)
+    iszero(scale) && return (T(NaN), :constant)
     if kind in (:quantile, :median)
         probability = kind === :median ? 1//2 : prob
         effective, status = _transformed_run_ess(runs, T; kind=:quantile,
