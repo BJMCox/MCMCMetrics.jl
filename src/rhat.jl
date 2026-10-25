@@ -27,8 +27,7 @@ function rhat(x; kind=:rank, split=true, drawdim=1, chaindim=_default_chaindim(x
     d = _draws(x; drawdim, chaindim, counts)
     length(d.chains) >= 2 || throw(ArgumentError("R-hat requires at least two independent chains"))
     all(==(first(d.lengths)), d.lengths) || throw(ArgumentError("R-hat requires equal logical chain lengths"))
-    values = [_rhat_parameter_result(d, p; kind, split).value for p in 1:prod(d.shape)]
-    _parameter_result(values, d.shape)
+    _parameter_result(_parameter_values(p -> _rhat_parameter_result(d, p; kind, split).value, d), d.shape)
 end
 
 # The exact split clipping and nearer-tail rank transform follow BAT.jl's

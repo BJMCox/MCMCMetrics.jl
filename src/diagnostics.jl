@@ -16,35 +16,37 @@ function diagnostics(x; drawdim=1, chaindim=_default_chaindim(x), counts=nothing
     max_lag_work=100_000_000)
     d = _draws(x; drawdim, chaindim, counts)
     max_lag_work > 0 || throw(ArgumentError("max_lag_work must be positive"))
-    T = _floattype(d)
+    T, P = _floattype(d), prod(d.shape)
     n_draws = foldl(Base.Checked.checked_add, d.lengths; init=0)
-    rows = map(enumerate(vec(CartesianIndices(d.shape)))) do (p, index)
-        if isnothing(d.counts) && all(==(first(d.lengths)), d.lengths)
-            runs = _parameter_runs(d, p, true)
-            rankvalues = _rank_normalize(runs.values, runs.weights, T)
-            r, rstatus = _rhat_parameter_result(d, p; runs, ranked=rankvalues)
-            samples = reshape(runs.values, runs.n, 2length(d.chains))
-            ranked = reshape(rankvalues, size(samples))
-            bulk, bstatus = _ess_parameter_result(d, p; kind=:bulk, samples, ranked)
-            tail, tstatus = _ess_parameter_result(d, p; kind=:tail, samples)
-            error, mstatus = _mcse_parameter_result(d, p; samples)
-        else
-            r, rstatus = _rhat_parameter_result(d, p)
-            bulk, bstatus = _budgeted_result(T) do
-                _ess_parameter_result(d,p;kind=:bulk,max_lag_work)
-            end
-            tail, tstatus = _budgeted_result(T) do
-                _ess_parameter_result(d,p;kind=:tail,max_lag_work)
-            end
-            error, mstatus = _budgeted_result(T) do
-                _precision_parameter_result(d,p;max_lag_work)
-            end
+    names = (:rhat, :ess_bulk, :ess_tail, :mcse_mean)
+    values = NamedTuple{names}(ntuple(_ -> Vector{T}(undef, P), length(names)))
+    status = NamedTuple{names}(ntuple(_ -> Vector{Symbol}(undef, P), length(names)))
+    for p in 1:P
+        for (j, (value, s)) in enumerate(_diagnostic_metrics(d, p, max_lag_work))
+            values[j][p], status[j][p] = value, s
         end
-        (; index, rhat=r, ess_bulk=bulk, ess_tail=tail, mcse_mean=error,
-            n_draws, n_chains=length(d.chains),
-            status=(rhat=rstatus, ess_bulk=bstatus, ess_tail=tstatus, mcse_mean=mstatus))
     end
-    StructArrays.StructArray(rows)
+    StructArrays.StructArray((; index=vec(collect(CartesianIndices(d.shape))), values...,
+        n_draws=fill(n_draws, P), n_chains=fill(length(d.chains), P),
+        status=StructArrays.StructArray(status)))
+end
+
+function _diagnostic_metrics(d, p, max_lag_work)
+    T = _floattype(d)
+    if isnothing(d.counts) && all(==(first(d.lengths)), d.lengths)
+        runs = _parameter_runs(d, p, true)
+        rankvalues = _rank_normalize(runs.values, runs.weights, T)
+        samples = reshape(runs.values, runs.n, 2length(d.chains))
+        ranked = reshape(rankvalues, size(samples))
+        return (_rhat_parameter_result(d, p; runs, ranked=rankvalues),
+            _ess_parameter_result(d, p; kind=:bulk, samples, ranked),
+            _ess_parameter_result(d, p; kind=:tail, samples),
+            _mcse_parameter_result(d, p; samples))
+    end
+    (_rhat_parameter_result(d, p),
+        _budgeted_result(() -> _ess_parameter_result(d, p; kind=:bulk, max_lag_work), T),
+        _budgeted_result(() -> _ess_parameter_result(d, p; kind=:tail, max_lag_work), T),
+        _budgeted_result(() -> _precision_parameter_result(d, p; max_lag_work), T))
 end
 
 function _budgeted_result(f, ::Type{T}) where {T}

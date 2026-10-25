@@ -47,9 +47,10 @@ function ess(x; kind::Symbol=:bulk, split::Bool=true, estimator::Symbol=:geyer,
     _check_window(window, max_lag_work)
     d = _draws(x; drawdim, chaindim, counts)
     _check_fft_counts(d, autocov)
-    values = [_ess_parameter_result(d, p; kind, split, prob, interval,
-        estimator, autocov, window, max_lag_work)[1]
-        for p in 1:prod(d.shape)]
+    values = _parameter_values(d) do p
+        _ess_parameter_result(d, p; kind, split, prob, interval,
+            estimator, autocov, window, max_lag_work)[1]
+    end
     _parameter_result(values, d.shape)
 end
 
@@ -101,8 +102,10 @@ function mcse(x; estimand::Symbol=:mean, split::Bool=true, estimator::Symbol=:ge
     estimand in (:quantile, :median) && _check_ess_options(:quantile, :geyer, :direct, prob, nothing)
     d = _draws(x; drawdim, chaindim, counts)
     _check_fft_counts(d, autocov)
-    values = [_precision_parameter_result(d, p; estimand, split, estimator,
-        autocov, prob, window, batch_size, max_lag_work)[1] for p in 1:prod(d.shape)]
+    values = _parameter_values(d) do p
+        _precision_parameter_result(d, p; estimand, split, estimator,
+            autocov, prob, window, batch_size, max_lag_work)[1]
+    end
     _parameter_result(values, d.shape)
 end
 
