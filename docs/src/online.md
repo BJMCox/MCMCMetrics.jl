@@ -33,8 +33,8 @@ accepts one draw. `append!(state, chunk; chain=j)` accepts draws × parameter
 axes for one chain. Without `chain`, `append!` accepts every state chain using
 the batch axis convention. Both methods support repetition counts.
 
-Inputs must match the configured floating type. Convert integer observations
-explicitly before an update. Input arrays must remain unchanged during the call.
+Real inputs convert to the configured floating type, as in a `Vector{T}`.
+Values that overflow it are rejected as nonfinite. Input arrays must remain unchanged during the call.
 The state validates a whole chunk before mutation and checks count additions
 under locks. An invalid chunk contributes no observations.
 
@@ -47,7 +47,11 @@ Online reports contain the selected metric columns. Mean and variance values
 and statuses are per-chain vectors. Basic R-hat is one value per parameter.
 `n_per_chain` holds the counts. `n_draws` is their checked Int sum.
 Unequal chain lengths leave basic R-hat unavailable while per-chain moments remain
-available. Online R-hat requires `kind=:basic, split=false` explicitly.
+available. Online R-hat is the unsplit basic R-hat, the default of `rhat(state)`.
+`ess`, `mcse` and `iact` with `pooled=true` combine chains through replicated
+batch means at the shortest chain's batch width. `progress_summary` returns
+`(n_draws, max_rhat, min_ess)` cheaply and accepts unequal chain lengths, so a
+progress display can call it while producers run.
 
 ## Sampler loop
 
@@ -100,7 +104,7 @@ Storage counts parameters p, chains m and draws n.
 | `:rhat_basic` | Unsplit basic R-hat per parameter | Equal chain lengths | Shared moments |
 | `:mcse_mean`, `:ess_mean`, `:iact_mean` | Per-chain raw-mean precision from dyadic batch means | | O(p m log n) |
 | `:indicator` | The same precision for `I(x <= threshold)` | Finite scalar or parameter-shaped `threshold`, copied to T | O(p m log n) |
-| `:autocor` | Globally centered autocorrelations at lags 0 to `max_lag` | `max_lag >= 0` | O(p m max_lag) |
+| `:autocor` | Globally centered autocorrelations at lags 0 to `max_lag`, from compensated lag sums re-centered every n/8 draws | `max_lag >= 0` | O(p m max_lag) |
 
 The `:dyadic_batchmeans` estimator uses width `2^floor(floor(log2(n))/2)` and the
 sample variance of complete batch means centered on their own mean. The mean

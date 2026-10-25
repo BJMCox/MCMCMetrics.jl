@@ -34,8 +34,9 @@ julia> eltype(rhat(Float32.(x)))
 Float32
 ```
 
-`diagnostics(x)` returns a StructArray with `index`, `rhat`, `ess_bulk`,
-`ess_tail`, `mcse_mean`, `n_draws`, `n_chains`, and `status` columns.
+`diagnostics(x)` returns a StructArray with `index`, `mean`, `sd`, `q5`, `q95`,
+`rhat`, `ess_bulk`, `ess_tail`, `mcse_mean`, `mcse_sd`, `n_draws`, `n_chains`,
+and `status` columns.
 `index` is a CartesianIndex into the original parameter shape.
 `n_draws` counts all logical draws before splitting. Status is separate for
 each metric, so an unavailable tail estimate does not hide a valid mean estimate.
@@ -111,16 +112,19 @@ julia> report.n_draws, report.status.ess_bulk
 ```
 
 R-hat, ESS, MCSE, autocorrelation and IACT support exact repetitions without
-expansion. Direct compressed spectral work has an explicit `max_lag_work`
-budget. Exhausting that budget throws from a direct call; `diagnostics` reports
+expansion. Direct compressed spectral work has a `max_lag_work` budget, by
+default `max(100_000_000, 2S^2)` for `S` stored draws. Dense draws need no
+budget, because lags past `16 log2(n)` come from one FFT. Exhausting that budget throws from a direct call; `diagnostics` reports
 `:work_limit` for that metric and retains other available results.
 Batch estimators also bound window and run-overlap work. FFT, PSIS, estimand-tail
 fits and classical single-chain tests require uncompressed inputs.
 
 ## Invalid and unavailable results
 
-Malformed axes, counts, shapes, unsupported methods, and positive-count nonfinite
-observations throw. Zero-count observations are skipped, including nonfinite values.
+Malformed axes, counts, shapes and unsupported methods throw. A positive-count
+nonfinite observation gives that parameter the status `:nonfinite` in `rhat`,
+`ess`, `mcse` and `diagnostics`, and the other parameters stay available. Other
+functions throw on it. Zero-count observations are skipped, including nonfinite values.
 Empty draw or parameter axes are rejected.
 
 Statistically undefined estimates return a typed NaN. Aggregate status identifies

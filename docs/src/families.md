@@ -9,7 +9,7 @@ The caller owns warmup selection, chain identity, sampling design and stopping r
 self-consistent window. Geyer's shape argument requires reversibility. Sokal's
 window is a different estimator, with an explicit `window` setting.
 
-`mcse(x; estimand=...)` supports the mean, variance, standard deviation,
+`mcse(x; kind=...)` supports the mean, variance, standard deviation,
 quantile and median. Variance/SD use the centered-square influence process.
 Quantile uncertainty uses indicator ESS, Beta probability bounds and type-7
 empirical inversion. A tied interval that collapses returns unavailable precision.

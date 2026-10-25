@@ -71,6 +71,7 @@ loo_pit
 
 ```@docs
 OnlineDiagnostics
+progress_summary
 Base.push!(::OnlineDiagnostics, ::Any)
 Base.append!(::OnlineDiagnostics, ::Any)
 Base.empty!(::OnlineDiagnostics)

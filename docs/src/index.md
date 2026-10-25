@@ -34,8 +34,9 @@ julia> report.rhat ≈ rhat(x)
 true
 ```
 
-The report has one row per parameter and separate values/statuses for R-hat,
-bulk ESS, tail ESS and mean MCSE. Read a metric's status before using its value.
+The report has one row per parameter with the mean, SD and 5%/95% quantiles,
+and separate values/statuses for R-hat, bulk ESS, tail ESS, mean MCSE and SD
+MCSE. Read a metric's status before using its value.
 These diagnostics report sampling problems and precision; they do not prove
 that a chain has explored every important region.
 
