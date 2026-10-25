@@ -29,7 +29,7 @@ MCMCMetricsMCMCChainsExt = "MCMCChains"
 [compat]
 ArraysOfArrays = "1"
 DimensionalData = "0.29.24, 0.30"
-FFTW = "1"
+FFTW = "1.2.3"
 FlexiChains = "0.6.40"
 InferenceObjects = "0.4.17"
 LinearAlgebra = "1"
