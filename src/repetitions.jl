@@ -121,8 +121,7 @@ function _run_ess_result(runs; estimator=:geyer, autocov=:direct, window=5,
         centered .-= center
     end
     W = Statistics.mean(variances)
-    varplus = T(n - 1) / T(n) * W
-    m > 1 && (varplus += Statistics.var(means))
+    varplus = T(n - 1) / T(n) * W + (m > 1 ? Statistics.var(means) : zero(T))
     isfinite(varplus) && varplus > zero(T) || return (T(NaN), :estimator_failed)
     covariance = _autocov_function(z, runs, autocov, max_lag_work)
     rho = m == 1 ? k -> covariance(k) / varplus :

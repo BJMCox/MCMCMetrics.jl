@@ -302,8 +302,7 @@ function _geyer_ess_result(x::AbstractMatrix)
         centered .-= local_mean
     end
     W = Statistics.mean(variances)
-    varplus = T(n - 1) / T(n) * W
-    m > 1 && (varplus += Statistics.var(means))
+    varplus = T(n - 1) / T(n) * W + (m > 1 ? Statistics.var(means) : zero(T))
     isfinite(varplus) && varplus > zero(T) || return (T(NaN), :estimator_failed)
     # For a single unsplit chain use the ordinary normalized autocovariance.
     rho = m == 1 ? k -> _mean_autocov(z, k) / varplus :
