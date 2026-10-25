@@ -45,6 +45,23 @@
     @test mcse(constant_chain; split=false) ≈ sqrt(var(vec(constant_chain)) / (32 / 3))
 end
 
+@testset "AR(1) chains against MCMCDiagnosticTools" begin
+    # Deterministic noise keeps the fixture independent of RNG streams.
+    x = zeros(1000, 4)
+    for c in 1:4, i in 1:1000
+        noise = mod(sin(12.9898i + 78.233c) * 43758.5453, 1) - 0.5
+        x[i, c] = (i > 1 ? 0.9x[i-1, c] : 0.0) + noise
+    end
+    # MCMCDiagnosticTools 0.3.19 on reshape(x, 1000, 4, 1); test/reference/compare.jl
+    # recomputes them. Its ESS adds a terminal even-lag correction to plain IMS.
+    @test rhat(x) ≈ 1.0119025262669858 rtol=1e-14
+    @test rhat(x; kind=:basic) ≈ 1.0117998061268647 rtol=1e-14
+    @test ess(x; kind=:tail) ≈ 412.3710623838115 rtol=1e-12
+    @test ess(x) ≈ 209.59255082527065 rtol=5e-4
+    @test mcse(x) ≈ 0.0454122307287818 rtol=5e-4
+    @test mcse(x; kind=:sd) ≈ 0.02262239504192394 rtol=5e-4
+end
+
 @testset "Slowly mixing chains" begin
     # Late dense lags come from the transform; the compressed path sums them
     # directly and, under the default budget, needs no explicit max_lag_work.
