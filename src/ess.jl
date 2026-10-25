@@ -306,7 +306,7 @@ end
 function _mean_autocov(z::AbstractArray{T}, lag::Integer) where {T}
     n, m = size(z, 1), size(z, 2)
     result = zero(T)
-    @inbounds for c in 1:m
+    for c in 1:m
         s = zero(T)
         @simd for i in 1:(n - lag)
             s = muladd(z[i, c], z[i + lag, c], s)
@@ -365,7 +365,7 @@ function _radix2_fft!(a::Vector{Complex{T}}, twiddles, inverse) where {T}
     half = 1
     while half < N
         stride = N ÷ 2half
-        @inbounds for s in 0:2half:N-1, k in 0:half-1
+        for s in 0:2half:N-1, k in 0:half-1
             w = twiddles[k * stride + 1]
             v = a[s + k + half + 1] * (inverse ? conj(w) : w)
             u = a[s + k + 1]
