@@ -156,7 +156,7 @@ function _batch_mcse_result(d, p, estimator, batch_size, max_lag_work)
         origin, scale = _sample_origin_scale(runs.values, T)
         # A stuck chain adds no mean variance, as in R-hat and ESS.
         iszero(scale) && continue
-        z =[_centered_value(v, origin, T) / scale for v in runs.values]
+        z = [_centered_value(v, origin, T) / scale for v in runs.values]
         a = n ÷ b
         batches = estimator === :batchmeans ? a : n - b + 1
         batches <= max_lag_work - work || throw(_WorkLimitError("batch work exceeds max_lag_work"))
