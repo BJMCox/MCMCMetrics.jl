@@ -79,21 +79,29 @@ function _online_lag_coordinates!(lags, draw, c, n)
     end
 end
 
+# Compensated cross .+= ring .* current. One shared axis lets the compiler drop
+# bounds checks, which the vectorized loop needs.
+function _online_lag_add!(cross, error, ring, current)
+    @simd for p in eachindex(cross, error, ring, current)
+        r, u = ring[p], current[p]
+        product = r * u
+        value, rounding = _online_sum(cross[p], product)
+        cross[p] = value
+        error[p] += rounding + fma(r, u, -product)
+    end
+end
+
 # Add `count` copies of the current coordinates after n draws.
 function _online_lag_step!(lags, c, n, count)
     T = eltype(lags.ring)
     np, cap = size(lags.ring, 1), size(lags.ring, 2)
     k = T(count)
     if count == 1
+        current = view(lags.current, :, c)
         for lag in 1:min(cap, n)
             slot = _online_slot(lags.head[c], lag, cap)
-            @inbounds @simd for p in 1:np
-                r, u = lags.ring[p, slot, c], lags.current[p, c]
-                product = r * u
-                value, error = _online_sum(lags.cross[p, lag, c], product)
-                lags.cross[p, lag, c] = value
-                lags.cross_error[p, lag, c] += error + fma(r, u, -product)
-            end
+            _online_lag_add!(view(lags.cross, :, lag, c), view(lags.cross_error, :, lag, c),
+                view(lags.ring, :, slot, c), current)
         end
         lags.head[c] = mod1(lags.head[c] + 1, cap)
         for p in 1:np
@@ -106,7 +114,7 @@ function _online_lag_step!(lags, c, n, count)
     else
         # Callers pass a run only after cap single steps filled the ring with it.
         for lag in 1:cap
-            @inbounds @simd for p in 1:np
+            for p in 1:np
                 u = lags.current[p, c]
                 square = u * u
                 product = k * square
