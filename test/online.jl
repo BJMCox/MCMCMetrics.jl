@@ -64,7 +64,8 @@
         before = diagnostics(state)
         @test_throws Exception append!(state, [5.0 7.0; 6.0 NaN])
         @test_throws Exception append!(state, [5.0 7.0; 6.0 8.0]; counts=[1 1; 1 -1])
-        @test_throws Exception append!(state, Float32[5 7; 6 8])
+        @test_throws Exception append!(state, ["5" "7"; "6" "8"])
+        @test_throws Exception push!(OnlineDiagnostics(Float32; nchains=1), 1e300; chain=1)
         @test_throws Exception push!(state, [5.0]; chain=1)
         @test_throws Exception push!(state, NaN; chain=1)
         after = diagnostics(state)
@@ -84,6 +85,48 @@
         append!(zero, [NaN, 2.0]; chain=1, counts=[0, 3])
         @test diagnostics(zero).mean[1] == [2.0]
         @test diagnostics(zero).n_per_chain[1] == [3]
+    end
+
+    @testset "Conversion and names" begin
+        converted = OnlineDiagnostics(Float32; nchains=2, parameter_shape=(2,), names=[:a, :b])
+        native = OnlineDiagnostics(Float32; nchains=2, parameter_shape=(2,))
+        x = [0.1 0.2; 0.3 0.4; 0.5 0.6;;; 1 2; 3 4; 5 6]
+        append!(converted, x[1:2, :, :])
+        push!(converted, x[3, 1, :]; chain=1)
+        push!(converted, x[3, 2, :]; chain=2)
+        append!(native, Float32.(x))
+        @test diagnostics(converted).mean == diagnostics(native).mean
+        @test diagnostics(converted).name == [:a, :b]
+    end
+
+    @testset "Pooled precision and progress summary" begin
+        # Replicated batch means over the complete batches of the shortest chain's width.
+        function pooled_oracle(chains)
+            n = minimum(length, chains)
+            b = 2^(floor(Int, log2(n)) ÷ 2)
+            batches = [mean(big.(x[(i-1)*b+1:i*b])) for x in chains for i in 1:length(x)÷b]
+            draws = big.(reduce(vcat, chains))
+            lrv = b * var(batches)
+            (ess=length(draws) * var(draws) / lrv, mcse=sqrt(lrv / length(draws)))
+        end
+        x = [sin(1.3i) + i / 40 for i in 1:100]
+        chains = [x[1:64], 0.5 .+ x[37:100]]
+        state = OnlineDiagnostics(Float64; nchains=2, metrics=(:rhat_basic, :ess_mean, :mcse_mean))
+        append!(state, reduce(hcat, chains))
+        expected = pooled_oracle(chains)
+        @test ess(state; pooled=true) ≈ expected.ess
+        @test mcse(state; pooled=true) ≈ expected.mcse
+        @test ess(state; pooled=true) < sum(ess(state))
+        @test progress_summary(state) == (n_draws=128, max_rhat=rhat(state), min_ess=ess(state; pooled=true))
+
+        append!(state, x[1:36]; chain=2)
+        @test ess(state; pooled=true) ≈ pooled_oracle([chains[1], vcat(chains[2], x[1:36])]).ess
+        @test isnan(progress_summary(state).max_rhat)
+
+        vector = OnlineDiagnostics(Float32; nchains=2, parameter_shape=(2,))
+        append!(vector, Float32[1 2; 3 4;;; 5 6; 7 9])
+        summary = progress_summary(vector)
+        @test summary.max_rhat == maximum(rhat(vector)) && isnan(summary.min_ess)
     end
 
     @testset "Snapshot ownership and reset" begin

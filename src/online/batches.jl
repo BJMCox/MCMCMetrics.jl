@@ -115,35 +115,64 @@ function _online_batch_info(n)
         completed_batches=div(n, width), remainder=rem(n, width), n_draws=n)
 end
 
+# Completed batches of `width`; width 1 batches are the draws themselves.
+function _online_batch_moments(moments, levels, p, c, width)
+    width == 1 && return (moments, p, c)
+    return (levels[c][trailing_zeros(width)].completed, p, 1)
+end
+
 function _online_precision(moments, levels, p, c, ::Type{T}; indicator=false, metric=:all) where {T}
     n = moments.n[p, c]
-    info = _online_batch_info(n)
-    unavailable(status) = (mcse_mean=T(NaN), ess_mean=T(NaN), iact_mean=T(NaN), status=status)
-    n < 2 && return unavailable(:insufficient_draws)
-    drawm2 = moments.m2[p, c] + moments.m2_error[p, c]
-    drawm2 <= zero(T) && return unavailable(indicator ? :unobserved_event : :constant)
-    a = info.completed_batches
-    a < 2 && return unavailable(:insufficient_batches)
-    drawscale = moments.scale[p, c]
-    batchm2, batchscale = if info.batch_width == 1
-        drawm2, drawscale
-    else
-        level = levels[c][trailing_zeros(info.batch_width)].completed
-        level.m2[p, 1] + level.m2_error[p, 1], level.scale[p, 1]
+    width = _online_batch_info(n).batch_width
+    batches, q, b = _online_batch_moments(moments, levels, p, c, width)
+    return _online_precision_value(T, moments, p, c, batches, q, b, width; indicator, metric)
+end
+
+# Replicated batch means (Gupta and Vats, Scand. J. Stat. 2025, doi:10.1111/sjos.70036):
+# batch means from all chains center on one pooled mean, so disagreeing chains
+# inflate the long-run variance. As in the per-chain estimator, that mean is over
+# complete batches. Unequal chains use the width of the shortest chain with draws.
+function _online_pooled_precision(moments, levels, p, ::Type{T}, draws, batches) where {T}
+    shortest = minimum(c -> moments.n[p, c] == 0 ? typemax(Int) : moments.n[p, c], axes(moments.n, 2))
+    width = shortest == typemax(Int) ? 1 : _online_batch_info(shortest).batch_width
+    _online_clear!(draws)
+    _online_clear!(batches)
+    for c in axes(moments.n, 2)
+        moments.n[p, c] == 0 && continue
+        Base.checked_add(draws.n[1, 1], moments.n[p, c])
+        _online_merge!(draws, moments, p, c)
+        _online_merge!(batches, _online_batch_moments(moments, levels, p, c, width)...)
     end
+    return _online_precision_value(T, draws, 1, 1, batches, 1, 1, width)
+end
+
+_online_merge!(target, source, p, c) = _online_add!(target, 1, 1, source.origin[p, c], source.n[p, c],
+    source.scale[p, c], source.mean[p, c], source.m2[p, c], source.m2_error[p, c])
+
+function _online_precision_value(::Type{T}, draws, p, c, batches, q, b, width;
+    indicator=false, metric=:all) where {T}
+    unavailable(status) = (mcse_mean=T(NaN), ess_mean=T(NaN), iact_mean=T(NaN), status=status)
+    n = draws.n[p, c]
+    n < 2 && return unavailable(:insufficient_draws)
+    drawm2 = draws.m2[p, c] + draws.m2_error[p, c]
+    drawm2 <= zero(T) && return unavailable(indicator ? :unobserved_event : :constant)
+    a = batches.n[q, b]
+    a < 2 && return unavailable(:insufficient_batches)
+    batchm2 = batches.m2[q, b] + batches.m2_error[q, b]
     batchm2 <= zero(T) && return unavailable(:degenerate_estimator)
+    drawscale, batchscale = draws.scale[p, c], batches.scale[q, b]
     drawvar = drawm2 / T(n - 1)
     batchvar = batchm2 / T(a - 1)
     # Form the MCSE directly: LRV itself need not fit in the user's type.
-    mcse = batchscale * (sqrt(batchvar) * sqrt(T(info.batch_width) / T(n)))
+    mcse = batchscale * (sqrt(batchvar) * sqrt(T(width) / T(n)))
     ratio = (drawscale / batchscale) * sqrt(drawvar / batchvar)
     ratio *= ratio
-    ess = (T(n) / T(info.batch_width)) * ratio
-    iact = T(info.batch_width) / ratio
+    ess = (T(n) / T(width)) * ratio
+    iact = T(width) / ratio
     if !isfinite(ratio) || iszero(ratio)
         logratio = T(2) * (log(drawscale) - log(batchscale)) + log(drawvar) - log(batchvar)
-        ess = exp(log(T(n)) - log(T(info.batch_width)) + logratio)
-        iact = exp(log(T(info.batch_width)) - logratio)
+        ess = exp(log(T(n)) - log(T(width)) + logratio)
+        iact = exp(log(T(width)) - logratio)
     end
     selected = metric === :mcse_mean ? (mcse,) : metric === :ess_mean ? (ess,) :
         metric === :iact_mean ? (iact,) : (mcse,ess,iact)
