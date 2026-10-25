@@ -1,4 +1,4 @@
-function _precision_parameter_result(d, p; estimand=:mean, split=true,
+function _precision_parameter_result(d, p; kind=:mean, split=true,
     estimator=:geyer, autocov=:direct, prob=0.5, window=5, batch_size=nothing,
     max_lag_work=100_000_000)
     T = _floattype(d)
@@ -8,14 +8,14 @@ function _precision_parameter_result(d, p; estimand=:mean, split=true,
     end
     all(==(first(d.lengths)), d.lengths) || return (T(NaN), :unequal_chain_lengths)
     first(d.lengths) ÷ (split ? 2 : 1) >= 4 || return (T(NaN), :insufficient_draws)
-    if estimand === :mean && isnothing(d.counts) && estimator === :geyer && autocov === :direct
+    if kind === :mean && isnothing(d.counts) && estimator === :geyer && autocov === :direct
         return _mcse_parameter_result(d, p; split)
     end
     full = _parameter_runs(d, p, false)
     runs = _parameter_runs(d, p, split)
     z, scale = _scaled_samples(full.values, T)
-    if estimand in (:quantile, :median)
-        probability = estimand === :median ? 1//2 : prob
+    if kind in (:quantile, :median)
+        probability = kind === :median ? 1//2 : prob
         effective, status = _transformed_run_ess(runs, T; kind=:quantile,
             prob=probability, interval=nothing, estimator, autocov, window, max_lag_work)
         status === :ok || return (effective, status)
@@ -26,7 +26,7 @@ function _precision_parameter_result(d, p; estimand=:mean, split=true,
         width = _run_quantile(z, full.weights, hi) - _run_quantile(z, full.weights, lo)
         width > zero(T) || return (T(NaN), :collapsed_interval)
         value = (width / T(2)) * scale
-    elseif estimand === :mean
+    elseif kind === :mean
         effective, status = _run_ess_result(runs; estimator, autocov, window, max_lag_work, T)
         status === :ok || return (effective, status)
         value = sqrt(_weighted_var(z, full.weights) / effective) * scale
@@ -41,7 +41,7 @@ function _precision_parameter_result(d, p; estimand=:mean, split=true,
             estimator, autocov, window, max_lag_work, T)
         status === :ok || return (effective, status)
         error = sqrt(_weighted_var(squares, full.weights) / effective)
-        value = estimand === :variance ? (error * scale) * scale :
+        value = kind === :variance ? (error * scale) * scale :
             error / (T(2) * sqrt(_weighted_mean(squares, full.weights))) * scale
     end
     isfinite(value) ? (value, :ok) : (T(NaN), :estimator_failed)

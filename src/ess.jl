@@ -63,7 +63,7 @@ function ess(x; kind::Symbol=:bulk, split::Bool=true, estimator::Symbol=:geyer,
 end
 
 """
-    mcse(x; estimand=:mean, split=true, estimator=:geyer, autocov=:direct,
+    mcse(x; kind=:mean, split=true, estimator=:geyer, autocov=:direct,
          prob=0.5, window=5, batch_size=nothing, kwargs...)
 
 Estimate the Monte Carlo standard error of the mean as the pooled raw sample
@@ -72,7 +72,7 @@ contribute to the standard deviation, including middle draws discarded by ESS
 splitting. The same finite-variance and reversibility assumptions as [`ess`](@ref)
 apply. Integer counts are supported without expansion.
 
-For `estimand=:variance` use the sample variance (divisor N-1) of the centered
+For `kind=:variance` use the sample variance (divisor N-1) of the centered
 squared influence process, divided by its own ESS; `:sd` divides that MCSE
 by twice the pooled population SD. These require a finite fourth moment and
 a CLT for that process.
@@ -91,31 +91,41 @@ the incomplete final batch; overlapping batches use every full window and
 the full-chain mean. Chain contributions are weighted by their retained
 lengths. See Flegal and Jones (2010), doi:10.1214/09-AOS735.
 Batch work limits both full windows and local run-overlap visits by
-`max_lag_work`, without storing windows.
+`max_lag_work`, without storing windows. The former keyword `estimand` is
+deprecated in favour of `kind`.
 """
-function mcse(x; estimand::Symbol=:mean, split::Bool=true, estimator::Symbol=:geyer,
+function mcse(x; kind::Symbol=:mean, split::Bool=true, estimator::Symbol=:geyer,
     autocov::Symbol=:direct, prob::Real=0.5, window::Real=5,
     batch_size=nothing, max_lag_work::Union{Integer,Nothing}=nothing,
-    drawdim=1, chaindim=_default_chaindim(x), counts=nothing)
-    estimand in (:mean, :variance, :sd, :quantile, :median) ||
-        throw(ArgumentError("unsupported MCSE estimand"))
+    drawdim=1, chaindim=_default_chaindim(x), counts=nothing, estimand=nothing)
+    isnothing(estimand) || return _deprecated_mcse(x, kind, estimand; split, estimator,
+        autocov, prob, window, batch_size, max_lag_work, drawdim, chaindim, counts)
+    kind in (:mean, :variance, :sd, :quantile, :median) ||
+        throw(ArgumentError("unsupported MCSE kind"))
     batch = estimator in (:batchmeans, :overlapping)
     if batch
-        estimand === :mean || throw(ArgumentError("batch estimators support mean MCSE"))
+        kind === :mean || throw(ArgumentError("batch estimators support mean MCSE"))
         autocov === :direct || throw(ArgumentError("batch estimators do not use FFT autocovariances"))
     else
         _check_geyer(estimator, autocov)
     end
     _check_window(window, max_lag_work)
-    estimand in (:quantile, :median) && _check_ess_options(:quantile, :geyer, :direct, prob, nothing)
+    kind in (:quantile, :median) && _check_ess_options(:quantile, :geyer, :direct, prob, nothing)
     d = _draws(x; drawdim, chaindim, counts, nonfinite=true)
     _check_fft_counts(d, autocov)
     budget = _lag_budget(d, max_lag_work)
     values = _parameter_values(d) do p
-        _precision_parameter_result(d, p; estimand, split, estimator,
+        _precision_parameter_result(d, p; kind, split, estimator,
             autocov, prob, window, batch_size, max_lag_work=budget)[1]
     end
     _parameter_result(values, d.shape)
+end
+
+function _deprecated_mcse(x, kind, estimand; kwargs...)
+    Base.depwarn("`mcse(x; estimand=...)` is deprecated, use `mcse(x; kind=...)`", :mcse)
+    kind === :mean || kind === estimand ||
+        throw(ArgumentError("pass the MCSE kind once, as `kind`"))
+    mcse(x; kind=estimand, kwargs...)
 end
 
 """

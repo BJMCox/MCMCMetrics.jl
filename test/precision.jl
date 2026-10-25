@@ -9,8 +9,8 @@
     end
     @test autocor(x; counts, lags=[0, 1, 5, 12, 16]) ≈ autocor(dense; lags=[0, 1, 5, 12, 16])
     @test iact(x; counts) ≈ iact(dense)
-    for estimand in (:mean, :variance, :sd, :quantile, :median)
-        @test isapprox(mcse(x; counts, estimand), mcse(dense; estimand); nans=true, rtol=5f-6)
+    for kind in (:mean, :variance, :sd, :quantile, :median)
+        @test isapprox(mcse(x; counts, kind), mcse(dense; kind); nans=true, rtol=5f-6)
     end
     # A handful of runs can represent enormous logical lengths. A short lag
     # query still works, while a long Geyer window must respect its work budget.
@@ -82,19 +82,20 @@ end
     tail = SpecialFunctions.erfc(inv(sqrt(2))) / 2
     bounds = probability_bound.([tail, 1 - tail])
     expected = (quantile(x, bounds[2]) - quantile(x, bounds[1])) / 2
-    @test mcse(x; estimand=:quantile, split=false) ≈ expected
-    @test mcse(x; estimand=:median, split=false) ≈ expected
+    @test mcse(x; kind=:quantile, split=false) ≈ expected
+    @test mcse(x; kind=:median, split=false) ≈ expected
     tied = repeat([0., 0, 0, 1]; outer=40)
-    @test isnan(mcse(tied; estimand=:quantile, prob=0.2, split=false))
+    @test isnan(mcse(tied; kind=:quantile, prob=0.2, split=false))
     # Independent exact-rational covariance and IMS calculations on squared
     # centered draws provide these non-Gaussian influence references.
-    @test mcse(x; estimand=:variance, split=false)^2 ≈ 253 / 1944
-    @test mcse(x; estimand=:sd, split=false)^2 ≈ 23 / 2160
+    @test mcse(x; kind=:variance, split=false)^2 ≈ 253 / 1944
+    @test mcse(x; kind=:sd, split=false)^2 ≈ 23 / 2160
+    @test (@test_deprecated mcse(x; estimand=:sd, split=false)) == mcse(x; kind=:sd, split=false)
     scale = ldexp(1f0, 50)
-    @test mcse(Float32.(x) .* scale; estimand=:variance, split=false) / scale / scale ≈
-        Float32(mcse(x; estimand=:variance, split=false))
-    @test mcse(Float32.(x) .* scale; estimand=:sd, split=false) / scale ≈
-        Float32(mcse(x; estimand=:sd, split=false))
+    @test mcse(Float32.(x) .* scale; kind=:variance, split=false) / scale / scale ≈
+        Float32(mcse(x; kind=:variance, split=false))
+    @test mcse(Float32.(x) .* scale; kind=:sd, split=false) / scale ≈
+        Float32(mcse(x; kind=:sd, split=false))
 end
 
 @testset "Sokal and diagnostic curves" begin
