@@ -9,7 +9,8 @@ anchored, scaled centered moments, using O(parameters × chains) storage.
 
 Select `:mcse_mean`, `:ess_mean`, or `:iact_mean` for per-chain raw-mean
 precision from dyadic nonoverlapping batch means, using
-O(parameters × chains × log(n)) storage. At n draws, use width
+O(parameters × chains × log(n)) storage and amortized constant work per parameter
+and draw. At n draws, use width
 `2^floor(floor(log2(n))/2)` and sample variance of the complete batch means.
 The mean, marginal variance and MCSE denominator use all n observations.
 Zero estimated long-run variance gives unavailable precision; ESS is not capped.

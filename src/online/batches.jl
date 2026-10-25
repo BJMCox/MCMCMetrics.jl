@@ -15,54 +15,83 @@ function _online_levels(::Type{T}, np, nc) where {T}
     return [typeof(level)[] for _ in 1:nc]
 end
 
+# Level j holds width 2^j. Width 1 batches are the draws themselves.
+_online_level_count(n) = n == 0 ? 0 : 8sizeof(Int) - 1 - leading_zeros(n)
+
 function _online_prepare!(levels, ::Type{T}, np, c, n) where {T}
-    needed = n == 0 ? 0 : 8sizeof(Int) - leading_zeros(n)
-    while length(levels[c]) < needed
+    while length(levels[c]) < _online_level_count(n)
         push!(levels[c], _OnlineBatchLevel(_online_moments(T, (np, 1)),
             _online_moments(T, (np, 1); second=false)))
     end
 end
 
-function _online_complete!(level, p)
+# Return the completed batch group for the next level.
+@inline function _online_complete!(level, p)
     partial = level.partial
+    group = (n=partial.n[p, 1], origin=partial.origin[p, 1], scale=partial.scale[p, 1],
+        mean=partial.mean[p, 1])
     # Only the mean enters between-batch moments. Do not carry a huge scale
     # from excursions that canceled within the batch into its small residual.
-    residual = partial.scale[p,1]*partial.mean[p,1]
+    residual = group.scale*group.mean
     scale = abs(residual)
     mean = iszero(scale) ? zero(residual) : sign(residual)
-    if iszero(scale) && !iszero(partial.mean[p,1])
-        scale, mean = partial.scale[p,1], partial.mean[p,1]
+    if iszero(scale) && !iszero(group.mean)
+        scale, mean = group.scale, group.mean
     end
-    _online_add!(level.completed, p, 1, partial.origin[p, 1], 1,
-        scale, mean)
+    _online_add!(level.completed, p, 1, group.origin, 1, scale, mean)
     partial.n[p, 1] = 0
+    return group
+end
+
+# A level's partial holds only completed lower batches, so it changes only when
+# the level below completes one. Input is an optional mixed lower batch `head`,
+# then `run` lower batches of x. Return the same description for the next level.
+@inline function _online_climb!(level, p, x, head, run, half)
+    partial = level.partial
+    completed = nothing
+    if head !== nothing
+        pending = partial.n[p, 1] > 0
+        _online_add!(partial, p, 1, head.origin, head.n, head.scale, head.mean)
+        pending && (completed = _online_complete!(level, p))
+    end
+    if run > 0 && partial.n[p, 1] > 0
+        _online_add!(partial, p, 1, x, half)
+        completed = _online_complete!(level, p)
+        run -= 1
+    end
+    full, rest = divrem(run, 2)
+    _online_add!(level.completed, p, 1, x, full)
+    _online_add!(partial, p, 1, x, rest * half)
+    return completed, full
 end
 
 # New widths must start with the prefix ending at that width, not the final run mean.
+function _online_start!(level, moments, p, c, x, endpoint, width)
+    n = moments.n[p, c]
+    level.partial.n[p, 1] = n
+    level.partial.origin[p, 1] = moments.origin[p, c]
+    level.partial.scale[p, 1] = moments.scale[p, c]
+    level.partial.mean[p, 1] = moments.mean[p, c]
+    _online_add!(level.partial, p, 1, x, width - n)
+    _online_complete!(level, p)
+    full, rest = divrem(endpoint - width, width)
+    _online_add!(level.completed, p, 1, x, full)
+    half = width >> 1
+    _online_add!(level.partial, p, 1, x, rest - rest % half)
+end
+
 function _online_batches!(levels, moments, p, c, x, count)
     count == 0 && return
     n = moments.n[p, c]
     endpoint = n + count
-    for (j, level) in enumerate(levels[c])
-        width = 1 << (j - 1)
-        width > endpoint && break
-        left = count
-        if n < width
-            level.partial.n[p, 1] = moments.n[p, c]
-            level.partial.origin[p, 1] = moments.origin[p, c]
-            level.partial.scale[p, 1] = moments.scale[p, c]
-            level.partial.mean[p, 1] = moments.mean[p, c]
-        end
-        partial = level.partial.n[p, 1]
-        if partial > 0
-            take = min(left, width - partial)
-            _online_add!(level.partial, p, 1, x, take)
-            left -= take
-            partial + take == width && _online_complete!(level, p)
-        end
-        full, remainder = divrem(left, width)
-        _online_add!(level.completed, p, 1, x, full)
-        _online_add!(level.partial, p, 1, x, remainder)
+    started = _online_level_count(n)
+    head, run = nothing, count
+    for j in 1:started
+        head, run = _online_climb!(levels[c][j], p, x, head, run, 1 << (j - 1))
+        head === nothing && run == 0 && break
+    end
+    for j in started+1:_online_level_count(endpoint)
+        _online_start!(levels[c][j], moments, p, c, x, endpoint, 1 << j)
     end
 end
 
@@ -95,13 +124,16 @@ function _online_precision(moments, levels, p, c, ::Type{T}; indicator=false, me
     drawm2 <= zero(T) && return unavailable(indicator ? :unobserved_event : :constant)
     a = info.completed_batches
     a < 2 && return unavailable(:insufficient_batches)
-    level = levels[c][trailing_zeros(info.batch_width) + 1].completed
-    batchm2 = level.m2[p, 1] + level.m2_error[p, 1]
+    drawscale = moments.scale[p, c]
+    batchm2, batchscale = if info.batch_width == 1
+        drawm2, drawscale
+    else
+        level = levels[c][trailing_zeros(info.batch_width)].completed
+        level.m2[p, 1] + level.m2_error[p, 1], level.scale[p, 1]
+    end
     batchm2 <= zero(T) && return unavailable(:degenerate_estimator)
     drawvar = drawm2 / T(n - 1)
     batchvar = batchm2 / T(a - 1)
-    drawscale = moments.scale[p, c]
-    batchscale = level.scale[p, 1]
     # Form the MCSE directly: LRV itself need not fit in the user's type.
     mcse = batchscale * (sqrt(batchvar) * sqrt(T(info.batch_width) / T(n)))
     ratio = (drawscale / batchscale) * sqrt(drawvar / batchvar)

@@ -83,6 +83,20 @@ end
         @test only(mcse(compressed)) ≈ Float32(expected.mcse) rtol=64eps(Float32)
         @test mcse(compressed) ≈ mcse(chunks) ≈ mcse(split)
         @test ess(compressed) ≈ ess(chunks) ≈ ess(split)
+
+        # Hierarchical levels receive mixed batches from below after each run.
+        runs = OnlineDiagnostics(Float64; nchains=1, metrics)
+        for cycle in 1:2
+            empty!(runs)
+            values = [sin(3.7i) + i / 50 for i in 1:300]
+            counts = [(1, 1, 2, 5, 37)[mod1(7i + cycle, 5)] for i in 1:300]
+            for i in eachindex(values)
+                push!(runs, values[i]; chain=1, count=counts[i])
+                i % 30 == 0 || continue
+                expected = online_precision_oracle(values[1:i], counts[1:i])
+                @test only(mcse(runs)) ≈ expected.mcse rtol=64eps()
+            end
+        end
     end
 
     @testset "Native precision, large offsets and counts" begin
