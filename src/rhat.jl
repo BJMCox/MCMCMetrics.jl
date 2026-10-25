@@ -61,28 +61,30 @@ end
 function _rank_normalize(values::AbstractVector, weights::AbstractVector{Int}, ::Type{T}=_floattype(eltype(values)), order=sortperm(values)) where {T}
     total = foldl(Base.Checked.checked_add, weights; init=0)
     scores = Vector{T}(undef, length(values))
-    before = 0
-    i = 1
-    while i <= length(order)
-        j = i + 1
-        mass = weights[order[i]]
-        while j <= length(order) && values[order[j]] == values[order[i]]
-            mass = Base.Checked.checked_add(mass, weights[order[j]])
-            j += 1
-        end
+    _foreach_tie(values, weights, order) do group, before, mass
         after = total - before - mass
         # Blom's tied rank probability, evaluated from the nearer tail so
         # large logical counts cannot round an upper-tail probability to one.
         probability = (T(min(before, after)) + T(mass) / T(2) + T(1) / T(8)) / (T(total) + T(1) / T(4))
         score = -sqrt(T(2)) * SpecialFunctions.erfcinv(T(2) * min(probability, T(1) / T(2)))
-        before > after && (score = -score)
-        for k in i:j-1
-            scores[order[k]] = score
+        scores[group] .= before > after ? -score : score
+    end
+    scores
+end
+
+# Call f(indices, mass_before, mass) for each group of tied values in sorted order.
+function _foreach_tie(f::F, values, weights, order) where {F}
+    before, i = 0, 1
+    while i <= length(order)
+        j, mass = i + 1, weights[order[i]]
+        while j <= length(order) && values[order[j]] == values[order[i]]
+            mass = Base.Checked.checked_add(mass, weights[order[j]])
+            j += 1
         end
+        f(view(order, i:j-1), before, mass)
         before += mass
         i = j
     end
-    scores
 end
 
 function _folded_values(values, weights, order=sortperm(values))

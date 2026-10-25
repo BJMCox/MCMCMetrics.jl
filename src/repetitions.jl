@@ -120,14 +120,7 @@ function _run_ess_result(runs; estimator=:geyer, autocov=:direct, window=5,
         variances[c] = _weighted_var(centered, weights)
         centered .-= center
     end
-    W = Statistics.mean(variances)
-    varplus = T(n - 1) / T(n) * W + (m > 1 ? Statistics.var(means) : zero(T))
-    isfinite(varplus) && varplus > zero(T) || return (T(NaN), :estimator_failed)
-    covariance = _autocov_function(z, runs, autocov, max_lag_work)
-    rho = m == 1 ? k -> covariance(k) / varplus :
-        k -> one(T) - (W - covariance(k)) / varplus
-    tau = _window_tau(rho, n, T, estimator, window)
-    isfinite(tau) ? (T(n) * T(m) / tau, :ok) : (T(NaN), :estimator_failed)
+    _combined_ess(_autocov_function(z, runs, autocov, max_lag_work), means, variances, n, estimator, window)
 end
 
 function _run_order_statistic(values, weights, index, order=sortperm(values))
@@ -141,9 +134,7 @@ end
 
 function _run_indicator(runs, prob, ::Type{T}) where {T}
     total = foldl(Base.Checked.checked_add, runs.weights; init=0)
-    probability = Rational{BigInt}(prob)
-    rank = 1 + Int(fld((total - 1) * numerator(probability), denominator(probability)))
-    cutoff = _run_order_statistic(runs.values, runs.weights, rank)
+    cutoff = _run_order_statistic(runs.values, runs.weights, _cutoff_rank(total, prob))
     map(v -> T(v <= cutoff), runs.values)
 end
 

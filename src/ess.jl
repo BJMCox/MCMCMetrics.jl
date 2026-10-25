@@ -264,12 +264,15 @@ end
 # indicator x <= quantile, only the lower order statistic is needed. Comparing
 # original observations avoids losing integer distinctions in a float threshold.
 function _quantile_indicator(x, prob::Real, ::Type{T}) where {T}
-    # The cutoff is an integer rank. Exact probability arithmetic prevents
-    # multiplication or addition from rounding it to the next observation.
-    probability = Rational{BigInt}(prob)
-    index = 1 + Int(fld((length(x) - 1) * numerator(probability), denominator(probability)))
-    cutoff = partialsort!(collect(vec(x)), index)
+    cutoff = partialsort!(collect(vec(x)), _cutoff_rank(length(x), prob))
     map(v -> T(v <= cutoff), x)
+end
+
+# The cutoff is an integer rank. Exact probability arithmetic prevents
+# multiplication or addition from rounding it to the next observation.
+function _cutoff_rank(total, prob)
+    probability = Rational{BigInt}(prob)
+    1 + Int(fld((total - 1) * numerator(probability), denominator(probability)))
 end
 
 function _mean_autocov(z::AbstractArray{T}, lag::Integer) where {T}
@@ -305,15 +308,21 @@ function _geyer_ess_result(x::AbstractMatrix)
         means[c] = _centered_value(chain_origin, origin, T) / scale + local_mean
         centered .-= local_mean
     end
+    _combined_ess(k -> _mean_autocov(z, k), means, variances, n, :geyer, 5)
+end
+
+# Multi-chain autocorrelation from the pooled variance estimate of Vehtari et
+# al. (2021). `covariance(k)` averages the chains' lag-k autocovariances.
+function _combined_ess(covariance::F, means::Vector{T}, variances, n, estimator, window) where {F,T}
+    m = length(means)
     W = Statistics.mean(variances)
     varplus = T(n - 1) / T(n) * W + (m > 1 ? Statistics.var(means) : zero(T))
     isfinite(varplus) && varplus > zero(T) || return (T(NaN), :estimator_failed)
     # For a single unsplit chain use the ordinary normalized autocovariance.
-    rho = m == 1 ? k -> _mean_autocov(z, k) / varplus :
-        k -> one(T) - (W - _mean_autocov(z, k)) / varplus
-    tau = _window_tau(rho, n, T, :geyer, 5)
-    isfinite(tau) && tau > zero(T) || return (T(NaN), :estimator_failed)
-    (T(n) * T(m) / tau, :ok)
+    rho = m == 1 ? k -> covariance(k) / varplus :
+        k -> one(T) - (W - covariance(k)) / varplus
+    tau = _window_tau(rho, n, T, estimator, window)
+    isfinite(tau) ? (T(n) * T(m) / tau, :ok) : (T(NaN), :estimator_failed)
 end
 
 function _mcse_parameter_result(d, p; split=true, samples=nothing)
